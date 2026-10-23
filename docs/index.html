@@ -9,7 +9,7 @@
    tap like a wall calendar, then standings. One deliberate dark look. Team colors come from team.json and set
    --primary and --accent at load; every other color below is derived from those two. */
 :root{
-  --primary:#2d68db; --accent:#e3263c;
+  --primary:#2d68db; --accent:#e3263c; --on-accent:#fff; --on-primary:#fff;
   --primary-hi:color-mix(in oklab,var(--primary) 78%,white); --primary-soft:color-mix(in oklab,var(--primary) 50%,white);
   --accent-deep:color-mix(in oklab,var(--accent) 58%,black); --accent-soft:color-mix(in oklab,var(--accent) 58%,white);
   --night:color-mix(in oklab,var(--primary) 9%,#03050b); --navy:color-mix(in oklab,var(--primary) 17%,#060912);
@@ -70,7 +70,7 @@ a{color:var(--primary-soft)}
 @media (max-width:820px){.fig .cut{max-height:340px}}
 .fig .framed{width:min(330px,80vw);aspect-ratio:4/5;object-fit:cover;border-radius:180px 180px 16px 16px;border:5px solid var(--ink);box-shadow:0 0 0 6px var(--accent),0 20px 40px rgba(0,0,0,.5);margin-bottom:26px}
 .fig .ph{width:min(320px,76vw);max-width:100%}
-.fig .wt{position:absolute;left:8%;bottom:34px;display:grid;justify-items:center;background:var(--accent);color:#fff;border-radius:10px;padding:8px 12px 6px;transform:rotate(-6deg);box-shadow:0 8px 18px rgba(0,0,0,.4)}
+.fig .wt{position:absolute;left:8%;bottom:34px;display:grid;justify-items:center;background:var(--accent);color:var(--on-accent);border-radius:10px;padding:8px 12px 6px;transform:rotate(-6deg);box-shadow:0 8px 18px rgba(0,0,0,.4)}
 .fig .wt b{font:900 40px/0.9 var(--display)} .fig .wt span{font:800 11px var(--body);letter-spacing:.18em}
 .say{position:relative;align-self:center;padding-bottom:40px}
 @media (max-width:820px){.say{order:2;padding-bottom:28px}}
@@ -88,7 +88,7 @@ a{color:var(--primary-soft)}
 .corner .who i:first-child{margin-left:0}
 .corner span{color:var(--muted);font-size:15px}
 .corner span b{color:var(--ink)}
-.cta{display:inline-flex;align-items:center;gap:10px;background:var(--accent);color:#fff;font:800 22px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;padding:14px 22px 13px;border-radius:10px;text-decoration:none;box-shadow:0 6px 0 var(--accent-deep)}
+.cta{display:inline-flex;align-items:center;gap:10px;background:var(--accent);color:var(--on-accent);font:800 22px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;padding:14px 22px 13px;border-radius:10px;text-decoration:none;box-shadow:0 6px 0 var(--accent-deep)}
 .cta:hover{transform:translateY(-1px)} .cta:active{transform:translateY(3px);box-shadow:0 3px 0 var(--accent-deep)}
 
 /* progress strip */
@@ -253,7 +253,7 @@ a{color:var(--primary-soft)}
 .cart .wrap{display:flex;align-items:center;gap:6px 14px;padding-block:10px;flex-wrap:wrap}
 .cart .sum{font:900 30px/1 var(--display)}
 .cart .what{font-size:14px;font-weight:700;color:#3b4565;min-width:0}
-.cart .go{margin-left:auto;background:var(--accent);color:#fff;font:800 20px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;padding:12px 18px 11px;border-radius:9px}
+.cart .go{margin-left:auto;background:var(--accent);color:var(--on-accent);font:800 20px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;padding:12px 18px 11px;border-radius:9px}
 .cart .clr{color:#3b4565;text-decoration:underline;font-size:14px}
 .scrim{position:fixed;inset:0;z-index:30;background:rgba(2,5,14,.72);display:grid;place-items:end center}
 @media (min-width:700px){.scrim{place-items:center}}
@@ -281,7 +281,7 @@ textarea.inp{min-height:110px;resize:vertical;font-size:16px;line-height:1.45}
 .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .btn{border-radius:9px;padding:10px 16px;font-weight:700;border:1.5px solid var(--line-2)}
 .btn:hover{border-color:var(--primary-soft)}
-.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .btn.blu{background:var(--primary);border-color:var(--primary);color:#fff}
 .btn.mini{padding:6px 11px;font-size:13px}
 .btn:disabled{opacity:.5;cursor:default}

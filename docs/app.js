@@ -12,6 +12,9 @@ function useConfig(cfg){C=cfg;const p=PRON[(cfg.athletes&&cfg.athletes.pronouns)
   PN={...p,Sub:cap(p.sub),Obj:cap(p.obj),Pos:cap(p.pos)};
   A={one:cfg.athletes.singular||"athlete",many:cfg.athletes.plural||"athletes",One:cap(cfg.athletes.singular||"athlete"),Many:cap(cfg.athletes.plural||"athletes"),detail:cfg.athletes.detail||{label:"",short:"",suffix:""}};
   const r=document.documentElement.style,col=cfg.team.colors||{};if(col.primary)r.setProperty("--primary",col.primary);if(col.accent)r.setProperty("--accent",col.accent);
+  // Text on team-colored buttons: dark on light colors (like gold), white on dark ones.
+  const lum=hex=>{const m=/^#?([0-9a-f]{6})$/i.exec(hex||"");if(!m)return 0;const n=parseInt(m[1],16);return[n>>16,n>>8&255,n&255].map(v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)}).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0)};
+  r.setProperty("--on-accent",lum(col.accent)>.35?"#141824":"#fff");r.setProperty("--on-primary",lum(col.primary)>.35?"#141824":"#fff");
   document.title=cfg.brand.name+" · "+cfg.team.name;
   const ic=document.querySelector('link[rel="icon"]');if(ic)ic.href=cfg.team.logo;
   const md=document.querySelector('meta[name="description"]');if(md)md.content=cfg.brand.tagline+" "+cfg.team.name+".";}
