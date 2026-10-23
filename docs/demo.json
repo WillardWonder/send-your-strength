@@ -1,0 +1,236 @@
+{
+  "_readme": "Sample data for the preview only (GitHub Pages or any host without Firebase). The live site never loads this file.",
+  "today": "2026-12-14",
+  "featured": "d3",
+  "athletes": [
+    {
+      "id": "d1",
+      "name": "Ava Nowak",
+      "slug": "ava-nowak",
+      "weight": "100",
+      "photo": "demo-ava.webp",
+      "email": "ava.n@example.org",
+      "ask": "Hi, I'm Ava!\n\nI'm a freshman wrestling 100, and this is my first season ever. Everything is new: the drills, the conditioning, the nerves before a match.\n\nWill you sponsor one of my days? Even one {practice} practice means a lot. A meet is {meet}.\n\nLeave me a note and I'll open it the morning of your day. First seasons are hard, and your words will help.\n\nNo pressure. Thank you!"
+    },
+    {
+      "id": "d2",
+      "name": "Jada Moore",
+      "slug": "jada-moore",
+      "weight": "120",
+      "photo": "demo-jada.webp",
+      "email": "jada.m@example.org",
+      "ask": "Hey, it's Jada!\n\nLast year I was the girl watching from the bleachers. This year I'm on the mat at 120, learning something new every practice and keeping my grades up so I can stay there.\n\nWould you sponsor one of my days? Even one {practice} practice helps, and a meet is {meet}.\n\nLeave me a note when you do. I'll open it the morning of your day, and it'll get me through the last sprint drill.\n\nNo pressure at all. Thank you for believing in me!"
+    },
+    {
+      "id": "d3",
+      "name": "Addison Clark",
+      "slug": "addison-clark",
+      "weight": "",
+      "photo": "addison.webp",
+      "email": "addison.c@example.org"
+    },
+    {
+      "id": "d4",
+      "name": "Sofia Reyes",
+      "slug": "sofia-reyes",
+      "weight": "132",
+      "photo": "demo-sofia.webp",
+      "email": "sofia.r@example.org",
+      "ask": "Hi, it's Sofia!\n\nI'm a junior at 132, and my goal is to wrestle my way out of regionals this year. That means hard practices, extra conditioning, and staying on top of school when I'm tired.\n\nWill you sponsor one of my days? Even one {practice} practice makes a difference. A meet is {meet}.\n\nThe best part: leave me a note. I'll open it that morning, and on the tough days it'll remind me why I started.\n\nNo pressure. Thank you for being in my corner!"
+    },
+    {
+      "id": "d5",
+      "name": "Brooke Lindqvist",
+      "slug": "brooke-lindqvist",
+      "weight": "145",
+      "photo": "demo-brooke.webp",
+      "email": "brooke.l@example.org",
+      "ask": "Hey! It's Brooke.\n\nI wrestle 145 and I'm the loudest one in the practice room, so I'd love to hear from you too. This season is about getting stronger, staying positive, and helping our team grow.\n\nWould you sponsor one of my days? Even {practice} for a practice helps, and a meet is {meet}.\n\nLeave me a note and I'll open it the morning of your day.\n\nNo pressure at all. Thanks for backing our Bluejays!"
+    },
+    {
+      "id": "d6",
+      "name": "Tessa Brandt",
+      "slug": "tessa-brandt",
+      "weight": "185",
+      "photo": "",
+      "email": "tessa.b@example.org",
+      "ask": "Hi, it's Tessa!\n\nI'm a senior at 185, and this is my last season in a Merrill singlet. I want to finish strong and help the younger girls along the way.\n\nWill you sponsor one of my days? Even one {practice} practice makes a difference, and a meet is {meet}.\n\nLeave me a note and I'll open it the morning of your day.\n\nNo pressure at all. Thank you for being part of my senior year!"
+    }
+  ],
+  "sponsorships": [
+    [
+      "d3",
+      [
+        "2026-11-16",
+        "2026-11-17",
+        "2026-11-18",
+        "2026-11-19",
+        "2026-11-20"
+      ],
+      "Grandma Jo",
+      "First week! You were born tough, sweetheart. I'll be in the stands.",
+      "2026-11-16"
+    ],
+    [
+      "d3",
+      [
+        "2026-12-08"
+      ],
+      "The Lindqvist family",
+      "Scrimmage day. Have fun out there and trust your training.",
+      "2026-12-08"
+    ],
+    [
+      "d3",
+      [
+        "2026-12-11"
+      ],
+      "The Ostrowskis",
+      "Waunakee won't know what hit them. So proud of you!",
+      "2026-12-11"
+    ],
+    [
+      "d3",
+      [
+        "2026-12-14"
+      ],
+      "Uncle Mike",
+      "Monday practices are where state qualifiers are made. Every rep counts. Proud of you, kiddo.",
+      "2026-12-14"
+    ],
+    [
+      "d3",
+      [
+        "2026-12-22"
+      ],
+      "Aunt Carla",
+      "Hodag Dome! Wear the pink tape for good luck.",
+      "2026-12-22"
+    ],
+    [
+      "d3",
+      [
+        "2027-01-19",
+        "2026-12-01",
+        "2026-12-02"
+      ],
+      "Anonymous",
+      "Keep going. Someone is watching you work and it's inspiring.",
+      "2027-01-19"
+    ],
+    [
+      "d3",
+      [
+        "2026-12-03",
+        "2026-12-04"
+      ],
+      "Uncle Tony",
+      "",
+      null
+    ],
+    [
+      "d3",
+      [
+        "2027-01-09"
+      ],
+      "The Novak family",
+      "Bluejay Challenge champ? Go get it.",
+      "2027-01-09"
+    ],
+    [
+      "d1",
+      [
+        "2026-11-30",
+        "2026-12-01",
+        "2026-12-02",
+        "2026-12-03",
+        "2026-12-04",
+        "2026-12-08"
+      ],
+      "Mom & Dad",
+      "We love watching you wrestle!",
+      "2026-12-08"
+    ],
+    [
+      "d2",
+      [
+        "2026-12-15",
+        "2027-01-09",
+        "2026-12-16"
+      ],
+      "Uncle Tony",
+      "You've got this!",
+      "2027-01-09"
+    ],
+    [
+      "d4",
+      [
+        "2026-11-16",
+        "2026-11-17"
+      ],
+      "The Pietrowskis",
+      "",
+      null
+    ],
+    [
+      "d5",
+      [
+        "2026-12-30"
+      ],
+      "Grandma & Grandpa B",
+      "Safe travels to Waukesha!",
+      "2026-12-30"
+    ],
+    [
+      "d6",
+      [
+        "2026-12-07",
+        "2026-12-09",
+        "2026-12-10"
+      ],
+      "Coach Pat's neighbor",
+      "",
+      null
+    ],
+    [
+      "d1",
+      [
+        "2027-01-30"
+      ],
+      "Dave and Lisa",
+      "",
+      null
+    ],
+    [
+      "d4",
+      [
+        "2027-02-05"
+      ],
+      "Room 214",
+      "Go Sofia!",
+      "2027-02-05"
+    ]
+  ],
+  "awaitingApproval": [
+    [
+      "d3",
+      [
+        "2026-12-17"
+      ],
+      "Pat Jansky",
+      "Good luck this week. Can't wait to watch you compete!",
+      "2026-12-17"
+    ]
+  ],
+  "awaitingPayment": [
+    [
+      "d2",
+      [
+        "2026-12-21"
+      ],
+      "Sam (waiting on Venmo)",
+      "",
+      "2026-12-21"
+    ]
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "wrestlerId", "order": "ASCENDING" },
+        { "fieldPath": "released", "order": "ASCENDING" },
+        { "fieldPath": "revealAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "released", "order": "ASCENDING" },
+        { "fieldPath": "revealAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

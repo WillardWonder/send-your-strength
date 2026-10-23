@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Athlete photos: anyone can view; the athlete or an organizer can upload. JPG, PNG or WebP under 6 MB (no SVG, which can carry script).
+    match /wrestlers/{wrestlerId}/{file} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && (request.auth.token.admin == true || request.auth.token.wrestlerId == wrestlerId)
+                   && request.resource.size < 6 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+  }
+}

@@ -1,0 +1,34 @@
+rules_version = '2';
+// Send Your Strength. Browsers only READ. Every write goes through Cloud Functions (the Admin SDK skips these rules),
+// so nobody can mark a day paid, change a total, or read someone's notes from devtools.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.admin == true; }
+    function isWrestler(id) { return signedIn() && request.auth.token.wrestlerId == id; }
+
+    // Season, roster, which days are sponsored (sponsor display names only), team totals: public.
+    match /config/{doc}    { allow read: if true; allow write: if false; }
+    match /wrestlers/{id}  { allow read: if true; allow write: if false; }
+    match /claims/{id}     { allow read: if true; allow write: if false; }
+    match /team/{doc}      { allow read: if true; allow write: if false; }
+
+    // Notes to an athlete: only that athlete can read them, and only once a coach approved them
+    // and the morning release on their day has run. Organizers can read everything to moderate.
+    match /messages/{id} {
+      allow read: if isAdmin() || (isWrestler(resource.data.wrestlerId) && resource.data.released == true);
+      allow write: if false;
+    }
+
+    // Donor contact info, school emails: organizers only.
+    match /orders/{id}          { allow read: if isAdmin(); allow write: if false; }
+    match /rosterEmails/{email} { allow read: if isAdmin(); allow write: if false; }
+    match /wrestlerPrivate/{id} { allow read: if isAdmin(); allow write: if false; }
+
+    // Rate-limit counters (hashed caller keys): functions only.
+    match /rateLimits/{key}     { allow read, write: if false; }
+
+    // Anything not listed above is closed.
+    match /{document=**}        { allow read, write: if false; }
+  }
+}

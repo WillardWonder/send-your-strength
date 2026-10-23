@@ -1,0 +1,216 @@
+{
+  "_readme": "Edit this file for your team, then run: node scripts/sync-config.js (firebase deploy runs it for you). Text in {braces} fills in automatically.",
+  "brand": {
+    "name": "Send Your Strength",
+    "tagline": "Pick a day. Send a message. Help build the athlete.",
+    "lines": {
+      "note": "Your words can carry {obj} through the hard days.",
+      "idea": "Support the season. Strengthen the {athlete}.",
+      "thanks": "One message. One moment. One stronger athlete.",
+      "standings": "Be part of the work behind the wins."
+    }
+  },
+  "team": {
+    "name": "Merrill Girls Wrestling",
+    "school": "Merrill High School",
+    "sport": "wrestling",
+    "season": "2026–27",
+    "logo": "logo.png",
+    "colors": {
+      "primary": "#2d68db",
+      "accent": "#e3263c"
+    },
+    "paymentRecipient": "the Merrill Wrestling booster club",
+    "scheduleSource": "the team schedule and the WIAA calendar"
+  },
+  "athletes": {
+    "singular": "wrestler",
+    "plural": "wrestlers",
+    "pronouns": "she",
+    "detail": {
+      "label": "Weight",
+      "short": "Wt",
+      "prefix": "",
+      "suffix": "lbs"
+    }
+  },
+  "labels": {
+    "practice": "Practice",
+    "practiceDesc": "A day in the room",
+    "event": "Meet",
+    "eventDesc": "Duals and tournaments",
+    "postseason": "Postseason",
+    "postseasonTag": "WIAA",
+    "postseasonDesc": "Regional · Sectional · State"
+  },
+  "prices": {
+    "practiceCents": 500,
+    "eventMultiplier": 5
+  },
+  "reward": {
+    "name": "Bluejay Backer",
+    "text": "Sponsor 5 practices or 1 meet for the same wrestler and you're a Bluejay Backer: a handwritten thank-you and your name on the Backers wall at the Finale on Jan 19."
+  },
+  "payNote": "Every dollar goes to the Merrill Wrestling booster club for the team.",
+  "timezone": "America/Chicago",
+  "revealHour": 5,
+  "copy": {
+    "defaultAsk": "Hi, it's {first}!\n\nThis season I'm chasing the best version of me: in the practice room, on the mat, and in the classroom. Wrestling is hard, and some mornings it's just me and the mat.\n\nWill you sponsor one of my days? Even one {practice} practice makes a difference. A meet is {meet}.\n\nHere's the part I love: leave me a note. I'll open it the morning of your day, and on the tough days, your words will keep me going.\n\nNo pressure at all. Thank you for being in my corner!",
+    "shareText": "Hi! It's {first}. I'm on the {team} team this season and raising money for us. You can sponsor one of my practices ({practice}) or a meet ({meet}) and leave me a note I'll open that morning. Here's my calendar: {link}\nIt would mean a lot. Thank you!"
+  },
+  "schedule": {
+    "practiceStart": "2026-11-16",
+    "practiceEnd": "2027-02-04",
+    "lastDay": "2027-03-06",
+    "practiceWeekdays": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "events": [
+      {
+        "date": "2026-12-08",
+        "name": "Season-opening scrimmage",
+        "where": "Merrill (home)",
+        "label": "Scrimmage"
+      },
+      {
+        "date": "2026-12-11",
+        "name": "Waunakee",
+        "where": "Away",
+        "label": "@ Waunakee"
+      },
+      {
+        "date": "2026-12-15",
+        "name": "GNC/WVC multi-school",
+        "where": "Antigo or SPASH",
+        "label": "GNC/WVC"
+      },
+      {
+        "date": "2026-12-18",
+        "name": "Added event (Dec 18 or 19)",
+        "where": "Date and site to be announced",
+        "label": "TBA event"
+      },
+      {
+        "date": "2026-12-22",
+        "name": "Hodag Dome Tournament",
+        "where": "Rhinelander",
+        "label": "Hodag Dome"
+      },
+      {
+        "date": "2026-12-30",
+        "name": "Waukesha West",
+        "where": "Overnight trip",
+        "label": "@ Waukesha W."
+      },
+      {
+        "date": "2027-01-08",
+        "name": "Wausau West 16-team duals",
+        "where": "UW-Stevens Point",
+        "label": "UWSP Duals"
+      },
+      {
+        "date": "2027-01-09",
+        "name": "Bluejay Challenge",
+        "where": "Merrill (home)",
+        "label": "Bluejay Challenge"
+      },
+      {
+        "date": "2027-01-12",
+        "name": "GNC/WVC multi-school",
+        "where": "Lakeland or Wausau West",
+        "label": "GNC/WVC"
+      },
+      {
+        "date": "2027-01-14",
+        "name": "Boys & girls duals vs Tomahawk",
+        "where": "Merrill (home)",
+        "label": "vs Tomahawk"
+      },
+      {
+        "date": "2027-01-16",
+        "name": "Wausau West Individual Tournament",
+        "where": "Wausau",
+        "label": "Wausau West Ind."
+      },
+      {
+        "date": "2027-01-19",
+        "name": "Merrill Finale Tournament",
+        "where": "Merrill (home)",
+        "label": "Finale"
+      },
+      {
+        "date": "2027-01-21",
+        "name": "Home dual or multi-school",
+        "where": "Merrill (home)",
+        "label": "Home meet"
+      },
+      {
+        "date": "2027-01-26",
+        "name": "GNC/WVC Conference Tournament",
+        "where": "Tomahawk",
+        "label": "Conference"
+      },
+      {
+        "date": "2027-01-30",
+        "name": "Eau Claire North Tournament",
+        "where": "Eau Claire",
+        "label": "EC North"
+      },
+      {
+        "date": "2027-02-05",
+        "name": "WIAA Regional",
+        "where": "Merrill (home)",
+        "label": "Regional",
+        "postseason": true,
+        "priceCents": 4000
+      },
+      {
+        "date": "2027-02-12",
+        "name": "WIAA Individual Sectional",
+        "where": "Antigo",
+        "label": "Sectional",
+        "postseason": true,
+        "priceCents": 5000
+      },
+      {
+        "date": "2027-02-19",
+        "name": "WIAA Team Sectional",
+        "where": "Site to be announced",
+        "label": "Team Sectional",
+        "postseason": true,
+        "priceCents": 5000
+      },
+      {
+        "date": "2027-02-25",
+        "end": "2027-02-27",
+        "name": "WIAA Individual State",
+        "where": "Kohl Center, Madison",
+        "label": "State",
+        "postseason": true,
+        "priceCents": 10000
+      },
+      {
+        "date": "2027-03-05",
+        "end": "2027-03-06",
+        "name": "WIAA Team State",
+        "where": "La Crosse Center",
+        "label": "Team State",
+        "postseason": true,
+        "priceCents": 10000
+      }
+    ],
+    "breaks": {
+      "2026-11-26": "Thanksgiving",
+      "2026-11-27": "Thanksgiving break",
+      "2026-12-24": "Christmas Eve",
+      "2026-12-25": "Christmas",
+      "2026-12-29": "Travel to Waukesha",
+      "2026-12-31": "New Year's Eve",
+      "2027-01-01": "New Year's Day"
+    }
+  }
+}
