@@ -6,7 +6,7 @@ A sponsor-a-day fundraiser any team can run. Each athlete gets their own page an
 
 > Your words can carry them through the hard days. · Support the season. Strengthen the athlete. · One message. One moment. One stronger athlete. · Be part of the work behind the wins.
 
-The example setup is the Merrill (Wis.) girls wrestling team, 2026–27. The live preview runs on sample data: `https://<owner>.github.io/send-your-strength/`. Each athlete's preview page is that link plus `#their-link`, for example `#addison-clark`.
+The example setup is the Merrill (Wis.) girls wrestling team, 2026–27. The live preview runs on sample data: `https://<owner>.github.io/send-your-strength/`. Each sample athlete's page is that link plus `#<name>-<id>`, for example `#addison-c-d3`.
 
 ---
 
@@ -65,7 +65,8 @@ The live site runs on Firebase. Hosting serves `docs/`, Firestore holds the data
    firebase deploy
    ```
 6. **Set up the season.** Sign in as an organizer and choose **Set up season**. Then go to **Roster & logins** and upload a CSV with columns `name,email,detail` (see `roster-template.csv`).
-7. **Share the links.** Each athlete's link is `https://<your-site>/<their-name>`, for example `/addison-clark`. Coaches copy links from the roster; athletes find theirs in their locker.
+7. **Publish and share.** Each athlete signs in, publishes her page with a parent's OK, and copies her link (`https://<your-site>/p/<name>-<id>`) from her locker. Organizers can copy published links from the roster.
+8. **Check the rules** with `RULES-CHECKLIST.md`.
 
 **Test before launch:**
 - **Sign-in email.** Have one athlete sign in. School email systems often junk outside mail; if the link doesn't arrive, ask IT to allow `noreply@<project-id>.firebaseapp.com`.
@@ -75,9 +76,20 @@ The sample data (`docs/demo.json` and its photos) is never deployed to Firebase;
 
 ## Payments
 
-The default is **manual**. A sponsor picks days and writes a note, the page shows how to pay with a memo to copy, and the days are held for 3 days. A coach taps **Money received** when the payment arrives. Cash and checks can be recorded directly from the calendar.
+The site never holds or moves money. Sponsors pay the team directly.
 
-To take payments on the page, connect a processor whose verified webhook calls `markOrderPaid()` in `functions/index.js`. That function is the only place an order becomes paid. PayPal Checkout can show a Venmo button. `PAYMENT_MODE=mock` is for testing only.
+- **Payment options.** In **Organizer → Settings → How sponsors pay**, the team enters the accounts it already uses: Venmo (a business or charity profile), Cash App, PayPal.me, Zelle, and/or check or cash. Sponsors pick one at checkout, get the amount and a memo to copy, and are sent to that app. Days are held for 3 days; an organizer taps **Money received** when the payment shows up. Cash handed over in person is recorded straight from the calendar.
+- **Platform fee.** `PLATFORM_FEE_PERCENT` (0–20) in `functions/.env`. Whenever it's above 0, sponsors see the percentage on the checkout page and in How it works, and the terms say so. Payment apps can't split a payment, so for link, cash and check payments the fee is only tallied on the Money tab (when `FEE_ON_LINK_PAYMENTS=yes`) and invoiced to the team. Card checkout (Stripe or Square, coming next) will take it automatically.
+- `PAYMENT_MODE=mock` is for testing only and must never be deployed.
+
+## Privacy and consent
+
+- **Link-only pages.** Each athlete's page lives at `/p/<name>-<id>`, where the id is random. The database lets a browser read one page by its id but never list athletes unless signed in as a team member, so nothing public names the roster. Search engines are told not to index the site.
+- **Display names.** Public pages show first name and last initial (set `athletes.nameDisplay` to `"full"` in `team.json` for full names). Full names and emails are organizer-only.
+- **Publishing.** Every page starts hidden. The athlete publishes it from her locker after a parent or guardian approves the terms. Organizers can take a page down but can't publish one.
+- **Photos** are optional and need a parent's approval. Without one, the page shows the athlete's initial.
+- **Terms.** Organizers confirm 8 statements (authority, AD and booster approval, consent, logo permission, responsibility for funds, and more) before any organizer tool works. Sponsors agree at checkout. Every acceptance is recorded. `docs/terms.html` and `docs/privacy.html` are drafts for legal review; bump `TERMS_VERSION` in `functions/index.js` when they change.
+- **Retention.** A daily job deletes athlete and sponsor data 90 days after the season's last day unless the team renews (`config/season.renewedFor`).
 
 ## Security
 

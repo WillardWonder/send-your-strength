@@ -1,17 +1,31 @@
 rules_version = '2';
 // Send Your Strength. Browsers only READ. Every write goes through Cloud Functions (the Admin SDK skips these rules),
-// so nobody can mark a day paid, change a total, or read someone's notes from devtools.
+// so nobody can mark a day paid, change a total, publish a page, or read someone's notes from devtools.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && request.auth.token.admin == true; }
     function isWrestler(id) { return signedIn() && request.auth.token.wrestlerId == id; }
+    function teamMember() { return isAdmin() || (signedIn() && request.auth.token.wrestlerId is string); }
+    function published(id) { return get(/databases/$(database)/documents/wrestlers/$(id)).data.published == true; }
 
-    // Season, roster, which days are sponsored (sponsor display names only), team totals: public.
+    // Season, payment links, team totals: public.
     match /config/{doc}    { allow read: if true; allow write: if false; }
-    match /wrestlers/{id}  { allow read: if true; allow write: if false; }
-    match /claims/{id}     { allow read: if true; allow write: if false; }
     match /team/{doc}      { allow read: if true; allow write: if false; }
+
+    // Athlete pages are link-only. Anyone holding a page's link (its random id) can read that one published page.
+    // Nobody can LIST athletes unless signed in as a team member, so nothing public names the roster.
+    // The public record holds a display name only; full names and emails are in wrestlerPrivate.
+    match /wrestlers/{id} {
+      allow get: if resource.data.published == true || isAdmin() || isWrestler(id);
+      allow list: if teamMember();
+      allow write: if false;
+      // Which days are sponsored (sponsor display names only), readable with the page.
+      match /claims/{day} {
+        allow read: if published(id) || isAdmin() || isWrestler(id);
+        allow write: if false;
+      }
+    }
 
     // Notes to an athlete: only that athlete can read them, and only once a coach approved them
     // and the morning release on their day has run. Organizers can read everything to moderate.
@@ -20,15 +34,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Donor contact info, school emails: organizers only.
+    // Sponsor contact info, athletes' full names and school emails: organizers only.
     match /orders/{id}          { allow read: if isAdmin(); allow write: if false; }
     match /rosterEmails/{email} { allow read: if isAdmin(); allow write: if false; }
     match /wrestlerPrivate/{id} { allow read: if isAdmin(); allow write: if false; }
 
-    // Rate-limit counters (hashed caller keys): functions only.
-    match /rateLimits/{key}     { allow read, write: if false; }
+    // Terms acceptances, provider settings, processed payment events, rate-limit counters: functions only.
+    match /acceptances/{doc}     { allow read, write: if false; }
+    match /private/{doc}         { allow read, write: if false; }
+    match /processedEvents/{doc} { allow read, write: if false; }
+    match /rateLimits/{key}      { allow read, write: if false; }
 
     // Anything not listed above is closed.
-    match /{document=**}        { allow read, write: if false; }
+    match /{document=**}         { allow read, write: if false; }
   }
 }

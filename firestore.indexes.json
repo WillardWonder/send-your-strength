@@ -4,20 +4,53 @@
       "collectionGroup": "messages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "wrestlerId", "order": "ASCENDING" },
-        { "fieldPath": "released", "order": "ASCENDING" },
-        { "fieldPath": "revealAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "wrestlerId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "released",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "revealAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "messages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "released", "order": "ASCENDING" },
-        { "fieldPath": "revealAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "released",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "revealAt",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "claims",
+      "fieldPath": "dayKey",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    }
+  ]
 }

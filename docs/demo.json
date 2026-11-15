@@ -1,5 +1,5 @@
 {
-  "_readme": "Sample data for the preview only (GitHub Pages or any host without Firebase). The live site never loads this file.",
+  "_readme": "Sample data for the preview only (GitHub Pages or any host without Firebase). The live site never loads this file. Names, handles and notes are invented.",
   "today": "2026-12-14",
   "featured": "d3",
   "athletes": [
@@ -232,5 +232,20 @@
       "",
       "2026-12-21"
     ]
-  ]
+  ],
+  "payments": [
+    {
+      "type": "venmo",
+      "value": "Example-Boosters"
+    },
+    {
+      "type": "cashapp",
+      "value": "$ExampleBoosters"
+    },
+    {
+      "type": "check",
+      "value": "Payable to the booster club, give to Coach"
+    }
+  ],
+  "feePercent": 0
 }

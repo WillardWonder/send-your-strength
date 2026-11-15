@@ -38,7 +38,7 @@
           },
           {
             "key": "Referrer-Policy",
-            "value": "strict-origin-when-cross-origin"
+            "value": "no-referrer"
           },
           {
             "key": "Permissions-Policy",
@@ -47,6 +47,10 @@
           {
             "key": "Cross-Origin-Opener-Policy",
             "value": "same-origin-allow-popups"
+          },
+          {
+            "key": "X-Robots-Tag",
+            "value": "noindex, nofollow"
           }
         ]
       },

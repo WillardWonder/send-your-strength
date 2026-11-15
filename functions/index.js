@@ -4,23 +4,30 @@
  * Team-specific settings (names, schedule, prices, time zone, default text) come from team.json,
  * which scripts/sync-config.js copies here from the repo root.
  *
- * Browsers only read public data (see firestore.rules). Every write happens here,
- * so nobody can mark a day paid, change a total, or read an athlete's notes from devtools.
+ * Browsers only read (see firestore.rules). Every write happens here, so nobody can mark a day paid,
+ * change a total, publish a page, or read an athlete's notes from devtools.
  *
  * Roles live in Firebase Auth custom claims and are re-checked by claimRoles on every sign-in:
  *   admin: true          – email is in the ADMIN_EMAILS parameter
  *   wrestlerId: "<id>"   – email was on the roster CSV an organizer imported (and she's still active)
  *
- * Each athlete has a readable link: https://<site>/<slug>, e.g. /addison-clark.
- * (Internal collection names say "wrestlers" because the project started as a wrestling fundraiser;
- *  they work the same for any sport.)
+ * Privacy model
+ *   - Each athlete's page is link-only: https://<site>/p/<slug>-<id>. The id is Firestore's random 20-character
+ *     document id, and the rules let a browser GET one athlete by id but never LIST athletes unless signed in
+ *     as a team member. Nothing public names the athletes.
+ *   - The public athlete document holds a display name (first name + last initial by default), never the full
+ *     name or email. Those live in wrestlerPrivate/{id}, organizers only.
+ *   - A page stays hidden until the athlete (with a parent) accepts the athlete terms and publishes it.
+ *     Organizers can unpublish, never publish.
+ *   - Photos are optional and need a parent-approval confirmation.
+ *   - Organizers must accept the organizer terms (8 attestations) before any organizer tool works.
  *
- * Money flow:
- *   createOrder        holds the picked days and prices them server-side (never trusts the browser's price)
- *   mockPay            PAYMENT_MODE=mock only: stands in for a payment processor. Never use mock in production.
- *   adminConfirmOrder  organizer confirms money that arrived outside the page (manual mode)
- *   adminRecordPayment cash / check / Venmo handed over in person
- *   markOrderPaid      the ONE place an order becomes paid. A real processor's verified webhook calls this too.
+ * Money flow (the site never holds money)
+ *   createOrder        holds the picked days, prices them server-side, records which payment option the sponsor chose
+ *   mockPay            PAYMENT_MODE=mock only: stand-in for testing. Never deploy with mock.
+ *   adminConfirmOrder  organizer confirms money that arrived by a payment link (Venmo, Cash App, PayPal.me, Zelle, check)
+ *   adminRecordPayment cash / check / app payment handed over in person
+ *   markOrderPaid      the ONE place an order becomes paid. Card providers' verified webhooks will call it too.
  */
 const crypto = require("crypto");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
@@ -34,26 +41,34 @@ const { TEAM, buildSeasonDays, zonedTimeToUtc } = require("./schedule");
 initializeApp();
 const db = getFirestore();
 
-// manual = sponsors pay the booster club directly and organizers confirm it (safe default for go-live)
-// mock   = test payments that move no money (anyone holding an order id could mark it paid: testing only)
+// manual = sponsors pay the team directly (payment links, cash, check) and organizers confirm it. Default for go-live.
+// mock   = test payments that move no money. Testing only.
 const PAYMENT_MODE = defineString("PAYMENT_MODE", { default: "manual" });
 const ADMIN_EMAILS = defineString("ADMIN_EMAILS", { default: "" });
+// The platform's percentage (0–20). Card providers will deduct it automatically; for link, cash and check payments
+// it is only tallied for invoicing, and only when FEE_ON_LINK_PAYMENTS=yes. It is always disclosed to sponsors.
+const PLATFORM_FEE_PERCENT = defineString("PLATFORM_FEE_PERCENT", { default: "0" });
+const FEE_ON_LINK_PAYMENTS = defineString("FEE_ON_LINK_PAYMENTS", { default: "no" });
 
-const holdMinutes = () => (PAYMENT_MODE.value() === "manual" ? 72 * 60 : 15);
+// Bump this whenever docs/terms.html or docs/privacy.html changes in substance: everyone re-accepts.
+const TERMS_VERSION = "2026-11-15";
+const ORG_ATTESTATIONS = ["authority", "approval", "roster", "consent", "marks", "funds", "moderation", "fee"];
+
+const holdMinutes = () => (PAYMENT_MODE.value() === "mock" ? 15 : 72 * 60);
 const MAX_DAYS_PER_ORDER = 40;
 const MAX_MESSAGE = 280;
 const MAX_ASK = 900;
 const OPTS = { cors: true, maxInstances: 10 };
-const RESERVED_SLUGS = new Set(["index", "app", "admin", "organizer", "signin", "login", "api", "assets", "team", "demo", "logo", "docs", "standings", "calendar"]);
 
 /* ---------------- helpers ---------------- */
-const claimId = (wrestlerId, dayKey) => `${wrestlerId}__${dayKey}`;
 const clean = (s, max) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 const cleanText = (s, max) => String(s ?? "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, max);
 const emailKey = (e) => String(e || "").trim().toLowerCase();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const ID_RE = /^[A-Za-z0-9]{1,40}$/;
 const who = (req) => req.auth.token.email || req.auth.uid;
+const claimRef = (wrestlerId, dayKey) => db.doc(`wrestlers/${wrestlerId}/claims/${dayKey}`);
+const cleanId = (v) => { const id = clean(v, 40); if (!ID_RE.test(id)) throw new HttpsError("invalid-argument", "Unknown athlete."); return id; };
 
 const TZ = TEAM.timezone || "America/Chicago";
 const REVEAL_HOUR = Number.isInteger(TEAM.revealHour) ? TEAM.revealHour : 5;
@@ -61,11 +76,61 @@ const REVEAL_HOUR = Number.isInteger(TEAM.revealHour) ? TEAM.revealHour : 5;
 const revealAtFor = (dayKey) => Timestamp.fromDate(zonedTimeToUtc(dayKey, REVEAL_HOUR, TZ));
 
 // {first} fills in here; {practice} and {meet} fill in on the page so they track price changes.
+const firstOf = (name) => clean(name, 40).split(/\s+/)[0] || "";
 const defaultAsk = (first) => String(TEAM.copy.defaultAsk).replace(/\{first\}/g, first);
 const cleanDetail = (v) => clean(v, 12);
 
+/* What the public sees instead of the full name. "first-initial" (default): "Hailey L."; "full": "Hailey Lund". */
+function displayFor(name) {
+  const parts = clean(name, 40).split(/\s+/).filter(Boolean);
+  if (!parts.length) return "Athlete";
+  if ((TEAM.athletes && TEAM.athletes.nameDisplay) === "full" || parts.length === 1) return parts.join(" ");
+  return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
+}
+const slugify = (s) =>
+  clean(s, 80).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "athlete";
+
+/* ---------------- fees ---------------- */
+const feePercent = () => Math.min(20, Math.max(0, Number(PLATFORM_FEE_PERCENT.value()) || 0));
+const feeOnLink = () => /^(yes|true|1)$/i.test(String(FEE_ON_LINK_PAYMENTS.value()).trim());
+const feeFor = (cents) => Math.round((cents * feePercent()) / 100);
+const recipient = () => TEAM.team.paymentRecipient || TEAM.team.name;
+function feeDisclosure() {
+  const p = feePercent();
+  if (!p) return "";
+  return `${p}% of each payment supports ${TEAM.brand.name}, the platform that runs this page. The rest goes to ${recipient()}.`;
+}
+
+/* ---------------- payment options (links to the team's own accounts) ---------------- */
+const LINK_TYPES = {
+  venmo: (v) => { const s = v.replace(/^@/, ""); return /^[A-Za-z0-9_-]{5,30}$/.test(s) ? s : null; },
+  cashapp: (v) => { const s = v.replace(/^\$/, ""); return /^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(s) ? "$" + s : null; },
+  paypalme: (v) => { const s = v.replace(/^(https?:\/\/)?(www\.)?paypal\.me\//i, "").replace(/\/+$/, ""); return /^[A-Za-z0-9]{1,20}$/.test(s) ? s : null; },
+  zelle: (v) => {
+    if (EMAIL_RE.test(v)) return v.toLowerCase();
+    const d = v.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+    return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : null;
+  },
+  check: (v) => clean(v, 120) || null,
+};
+const LINK_LABEL = { venmo: "Venmo", cashapp: "Cash App", paypalme: "PayPal", zelle: "Zelle", check: "Check or cash" };
+
+async function paymentConfig() {
+  const snap = await db.doc("config/payments").get();
+  const d = snap.exists ? snap.data() : {};
+  return { links: Array.isArray(d.links) ? d.links : [], card: d.card || null };
+}
+
+/* ---------------- roles ---------------- */
 function requireAdmin(req) {
   if (!req.auth || req.auth.token.admin !== true) throw new HttpsError("permission-denied", "Organizer sign-in required.");
+}
+const orgTermsRef = (uid) => db.doc(`acceptances/org_${uid}_${TERMS_VERSION}`);
+/* Every organizer tool: signed in as an organizer AND has accepted the current organizer terms. */
+async function requireOrganizer(req) {
+  requireAdmin(req);
+  if (!(await orgTermsRef(req.auth.uid).get()).exists) throw new HttpsError("failed-precondition", "Accept the organizer terms first.");
 }
 function requireAthlete(req) {
   const id = req.auth && req.auth.token.wrestlerId;
@@ -73,11 +138,15 @@ function requireAthlete(req) {
   return id;
 }
 
-/* Photos must come from this project's own Storage bucket (or the local emulator). */
-function checkPhotoUrl(url) {
-  if (!url) return "";
-  if (url.startsWith("https://firebasestorage.googleapis.com/") || url.startsWith("http://127.0.0.1:9199/")) return url;
-  throw new HttpsError("invalid-argument", "Upload the photo from this page.");
+/* Photos must come from this project's own Storage bucket (or the local emulator), and need parent approval. */
+function photoPatch(d) {
+  const url = clean(d.photoUrl, 600);
+  if (!url) return { photoUrl: "", photoCutout: false, photoConsent: false };
+  if (d.photoConsent !== true) throw new HttpsError("failed-precondition", "Confirm a parent or guardian approved posting this photo.");
+  if (!(url.startsWith("https://firebasestorage.googleapis.com/") || url.startsWith("http://127.0.0.1:9199/"))) {
+    throw new HttpsError("invalid-argument", "Upload the photo from this page.");
+  }
+  return { photoUrl: url, photoCutout: !!d.photoCutout, photoConsent: true };
 }
 
 /* Per-caller rate limit for public calls, keyed by a hash of the caller's IP (the raw IP is never stored).
@@ -100,20 +169,6 @@ async function rateLimit(req, bucket, max, windowMs) {
   });
 }
 
-const slugify = (name) =>
-  clean(name, 80).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "wrestler";
-
-async function uniqueSlug(base, selfId) {
-  for (let i = 1; i < 100; i++) {
-    const cand = i === 1 ? base : `${base}-${i}`;
-    if (RESERVED_SLUGS.has(cand)) continue;
-    const q = await db.collection("wrestlers").where("slug", "==", cand).get();
-    if (q.docs.every((d) => d.id === selfId)) return cand;
-  }
-  throw new HttpsError("already-exists", "Couldn't find a free link for that name.");
-}
-
 async function getSeason(tx) {
   const ref = db.doc("config/season");
   const snap = tx ? await tx.get(ref) : await ref.get();
@@ -123,12 +178,16 @@ async function getSeason(tx) {
 const priceFor = (day, season) => day.priceCents || (day.kind === "event" ? season.practicePriceCents * season.eventMultiplier : season.practicePriceCents);
 const claimIsTaken = (c, now) => !!c && (c.status === "paid" || (c.status === "held" && c.holdExpires && c.holdExpires.toMillis() > now));
 
-/* Validates an order and writes it with holds. Must run inside a transaction (all reads before writes). */
-async function placeOrder(tx, input, { method }) {
+/* Validates an order and writes it with holds. Must run inside a transaction (all reads before writes).
+   Public orders need the sponsor to accept the terms and the athlete's page to be published. */
+async function placeOrder(tx, input, { method, publicOrder }) {
+  if (publicOrder && input.acceptTerms !== true) throw new HttpsError("invalid-argument", "Agree to the terms to continue.");
   const season = await getSeason(tx);
-  const wrestlerId = clean(input.wrestlerId, 40);
+  const wrestlerId = cleanId(input.wrestlerId);
   const wSnap = await tx.get(db.doc(`wrestlers/${wrestlerId}`));
-  if (!wSnap.exists || wSnap.data().active === false) throw new HttpsError("not-found", "That athlete isn't on the roster.");
+  const w = wSnap.data();
+  if (!wSnap.exists || w.active === false) throw new HttpsError("not-found", "That athlete isn't on the roster.");
+  if (publicOrder && w.published !== true) throw new HttpsError("failed-precondition", "This page isn't published yet.");
 
   const dayKeys = [...new Set((Array.isArray(input.dayKeys) ? input.dayKeys : []).map((k) => clean(k, 10)))].sort();
   if (!dayKeys.length || dayKeys.length > MAX_DAYS_PER_ORDER) throw new HttpsError("invalid-argument", "Pick between 1 and 40 days.");
@@ -144,9 +203,9 @@ async function placeOrder(tx, input, { method }) {
   const revealDay = dayKeys.includes(clean(input.revealDay, 10)) ? clean(input.revealDay, 10) : dayKeys[0];
 
   const now = Date.now();
-  const claimRefs = dayKeys.map((k) => db.doc(`claims/${claimId(wrestlerId, k)}`));
-  const claimSnaps = await Promise.all(claimRefs.map((r) => tx.get(r)));
-  const taken = claimSnaps.filter((s) => claimIsTaken(s.data(), now)).map((s) => s.data().dayKey);
+  const refs = dayKeys.map((k) => claimRef(wrestlerId, k));
+  const snaps = await Promise.all(refs.map((r) => tx.get(r)));
+  const taken = snaps.filter((s) => claimIsTaken(s.data(), now)).map((s) => s.data().dayKey);
   if (taken.length) throw new HttpsError("already-exists", "Someone just took one of those days.", { taken });
 
   const amountCents = dayKeys.reduce((sum, k) => sum + priceFor(byKey[k], season), 0);
@@ -156,13 +215,13 @@ async function placeOrder(tx, input, { method }) {
 
   tx.set(orderRef, {
     wrestlerId, dayKeys, amountCents, units, donorName, anon, contact, message, revealDay,
-    status: "pending", method, createdAt: FieldValue.serverTimestamp(),
+    status: "pending", method, termsVersion: publicOrder ? TERMS_VERSION : null, createdAt: FieldValue.serverTimestamp(),
   });
-  claimRefs.forEach((ref, i) => tx.set(ref, {
+  refs.forEach((ref, i) => tx.set(ref, {
     wrestlerId, dayKey: dayKeys[i], status: "held", orderId: orderRef.id,
     displayName: anon ? "Anonymous" : donorName, hasNote: false, holdExpires,
   }));
-  return { orderId: orderRef.id, amountCents, holdExpires: holdExpires.toMillis() };
+  return { orderId: orderRef.id, amountCents, holdExpires: holdExpires.toMillis(), method };
 }
 
 /* The only place an order becomes paid. Idempotent: a repeated call for a paid order changes nothing. */
@@ -175,7 +234,7 @@ async function markOrderPaid(orderId, payment) {
     if (o.status !== "pending") throw new HttpsError("failed-precondition", `This order is ${o.status}.`);
 
     const now = Date.now();
-    const refs = o.dayKeys.map((k) => db.doc(`claims/${claimId(o.wrestlerId, k)}`));
+    const refs = o.dayKeys.map((k) => claimRef(o.wrestlerId, k));
     const snaps = await Promise.all(refs.map((r) => tx.get(r)));
     // The hold lapsed and someone else took a day: never double-book. Flag it so an organizer refunds or moves it.
     const lost = snaps.filter((s) => { const c = s.data(); return c && c.orderId !== orderId && claimIsTaken(c, now); });
@@ -216,7 +275,16 @@ async function markOrderPaid(orderId, payment) {
 /* ---------------- public ---------------- */
 exports.createOrder = onCall(OPTS, async (req) => {
   await rateLimit(req, "order", 10, 10 * 60 * 1000);
-  return db.runTransaction((tx) => placeOrder(tx, req.data || {}, { method: "online" }));
+  const input = req.data || {};
+  let method = "online";
+  if (PAYMENT_MODE.value() !== "mock") {
+    const { links } = await paymentConfig();
+    const want = clean(input.method, 20);
+    if (!links.length) method = "manual";
+    else if (links.some((l) => l.type === want)) method = want;
+    else throw new HttpsError("invalid-argument", "Pick one of the payment options.");
+  }
+  return db.runTransaction((tx) => placeOrder(tx, input, { method, publicOrder: true }));
 });
 
 exports.mockPay = onCall(OPTS, async (req) => {
@@ -225,7 +293,14 @@ exports.mockPay = onCall(OPTS, async (req) => {
   return markOrderPaid(clean(req.data?.orderId, 40), { provider: "mock", ref: `mock_${Date.now()}`, at: Date.now() });
 });
 
-exports.paymentMode = onCall(OPTS, async () => ({ mode: PAYMENT_MODE.value() }));
+/* Everything the checkout needs to describe payment honestly, computed on the server. */
+exports.paymentMode = onCall(OPTS, async () => {
+  const { links } = await paymentConfig();
+  return {
+    mode: PAYMENT_MODE.value(), options: links, feePercent: feePercent(), feeOnLink: feeOnLink(),
+    disclosure: feeDisclosure(), termsVersion: TERMS_VERSION,
+  };
+});
 
 /* Recomputes roles from scratch on every sign-in, so removing someone from the organizer list
    or the roster takes their access away the next time they sign in (and within an hour otherwise). */
@@ -245,24 +320,53 @@ exports.claimRoles = onCall(OPTS, async (req) => {
   const changed = (current.admin === true) !== !!claims.admin || (current.wrestlerId || null) !== (claims.wrestlerId || null);
   if (changed) await getAuth().setCustomUserClaims(req.auth.uid, claims);
   if (claims.wrestlerId) await db.doc(`wrestlerPrivate/${claims.wrestlerId}`).set({ lastSignIn: FieldValue.serverTimestamp() }, { merge: true });
-  return { ...claims, changed };
+  const orgTerms = claims.admin ? (await orgTermsRef(req.auth.uid).get()).exists : false;
+  return { ...claims, changed, orgTerms, termsVersion: TERMS_VERSION };
 });
 
-/* ---------------- the wrestler herself ---------------- */
+/* ---------------- the athlete herself ---------------- */
 exports.athleteUpdateProfile = onCall(OPTS, async (req) => {
   const id = requireAthlete(req);
   const d = req.data || {};
   const patch = {};
   if (d.askText != null) patch.askText = cleanText(d.askText, MAX_ASK);
-  if (d.photoUrl != null) { patch.photoUrl = checkPhotoUrl(clean(d.photoUrl, 600)); patch.photoCutout = !!d.photoCutout; }
+  if (d.photoUrl != null) Object.assign(patch, photoPatch(d));
   if (!Object.keys(patch).length) return { ok: true };
   await db.doc(`wrestlers/${id}`).set(patch, { merge: true });
   return { ok: true };
 });
 
+/* Publishing needs the athlete's own sign-in and a parent's approval of the athlete terms. */
+exports.athletePublish = onCall(OPTS, async (req) => {
+  const id = requireAthlete(req);
+  const d = req.data || {};
+  if (d.version !== TERMS_VERSION) throw new HttpsError("failed-precondition", "The terms changed. Reload the page and read them again.");
+  if (d.parentApproved !== true) throw new HttpsError("failed-precondition", "A parent or guardian needs to approve before you publish.");
+  await db.doc(`acceptances/ath_${id}_${TERMS_VERSION}`).set({ wrestlerId: id, uid: req.auth.uid, email: req.auth.token.email || "", version: TERMS_VERSION, at: FieldValue.serverTimestamp() });
+  await db.doc(`wrestlers/${id}`).set({ published: true, consentVersion: TERMS_VERSION }, { merge: true });
+  return { ok: true };
+});
+
+exports.athleteUnpublish = onCall(OPTS, async (req) => {
+  const id = requireAthlete(req);
+  await db.doc(`wrestlers/${id}`).set({ published: false }, { merge: true });
+  return { ok: true };
+});
+
 /* ---------------- organizers ---------------- */
-exports.adminSetup = onCall(OPTS, async (req) => {
+exports.acceptOrganizerTerms = onCall(OPTS, async (req) => {
   requireAdmin(req);
+  const d = req.data || {};
+  if (d.version !== TERMS_VERSION) throw new HttpsError("failed-precondition", "The terms changed. Reload the page and read them again.");
+  const attest = Array.isArray(d.attest) ? d.attest.map((x) => clean(x, 20)) : [];
+  const missing = ORG_ATTESTATIONS.filter((a) => !attest.includes(a));
+  if (missing.length) throw new HttpsError("invalid-argument", "Confirm every statement to continue.", { missing });
+  await orgTermsRef(req.auth.uid).set({ uid: req.auth.uid, email: req.auth.token.email || "", version: TERMS_VERSION, attest: ORG_ATTESTATIONS, at: FieldValue.serverTimestamp() });
+  return { ok: true };
+});
+
+exports.adminSetup = onCall(OPTS, async (req) => {
+  await requireOrganizer(req);
   const ref = db.doc("config/season");
   const snap = await ref.get();
   const prev = snap.exists ? snap.data() : {};
@@ -279,16 +383,22 @@ exports.adminSetup = onCall(OPTS, async (req) => {
     match: prev.match || null,
   });
   await db.doc("team/totals").set({ raisedCents: FieldValue.increment(0), daysPaid: FieldValue.increment(0), orders: FieldValue.increment(0) }, { merge: true });
-  // Give every athlete a readable link if they don't have one yet.
+  // Older records kept the full name on the public document: move it to the private one.
   const all = await db.collection("wrestlers").get();
   for (const w of all.docs) {
-    if (!w.data().slug) await w.ref.update({ slug: await uniqueSlug(slugify(w.data().name), w.id) });
+    const x = w.data();
+    if (x.name) {
+      await db.doc(`wrestlerPrivate/${w.id}`).set({ name: x.name }, { merge: true });
+      await w.ref.set({ name: FieldValue.delete(), displayName: x.displayName || displayFor(x.name), slug: slugify(x.displayName || displayFor(x.name)) }, { merge: true });
+    } else if (!x.slug) {
+      await w.ref.set({ slug: slugify(x.displayName) }, { merge: true });
+    }
   }
   return { ok: true };
 });
 
 exports.adminSettings = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const d = req.data || {};
   const cents = Math.round(Number(d.practicePriceCents));
   if (!(cents >= 100 && cents <= 10000)) throw new HttpsError("invalid-argument", "Practice price must be between $1 and $100.");
@@ -305,10 +415,27 @@ exports.adminSettings = onCall(OPTS, async (req) => {
   return { ok: true };
 });
 
+/* The team's own payment links. One of each type at most; values are validated so a link can't point anywhere else. */
+exports.adminSetPaymentOptions = onCall(OPTS, async (req) => {
+  await requireOrganizer(req);
+  const rows = Array.isArray(req.data?.links) ? req.data.links.slice(0, 10) : [];
+  const links = [];
+  for (const r of rows) {
+    const type = clean(r && r.type, 20);
+    if (!LINK_TYPES[type]) throw new HttpsError("invalid-argument", "Card checkout is connected separately. Links can be Venmo, Cash App, PayPal, Zelle, or check.");
+    if (links.some((l) => l.type === type)) throw new HttpsError("invalid-argument", `Add ${LINK_LABEL[type]} only once.`);
+    const value = LINK_TYPES[type](clean(r.value, 160));
+    if (!value) throw new HttpsError("invalid-argument", `That ${LINK_LABEL[type]} handle doesn't look right.`);
+    links.push({ type, value });
+  }
+  await db.doc("config/payments").set({ links, updatedAt: FieldValue.serverTimestamp(), updatedBy: who(req) }, { merge: true });
+  return { ok: true, links };
+});
+
 /* CSV import: rows of {name, email, weight}. Matches existing athletes by email, so re-importing is safe.
-   An athlete's link (slug) is set once from their name and never changes on re-import, so links already sent keep working. */
+   New athletes start unpublished; their page goes live when they (with a parent) publish it. */
 exports.adminImportRoster = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const rows = Array.isArray(req.data?.rows) ? req.data.rows.slice(0, 80) : [];
   const result = { added: 0, updated: 0, skipped: [] };
   for (const r of rows) {
@@ -319,20 +446,23 @@ exports.adminImportRoster = onCall(OPTS, async (req) => {
     const mapRef = db.doc(`rosterEmails/${email}`);
     const map = await mapRef.get();
     if (map.exists) {
-      const patch = { name, active: true };
+      const id = map.data().wrestlerId;
+      const patch = { displayName: displayFor(name), active: true };
       if (weight) patch.weight = weight;
-      await db.doc(`wrestlers/${map.data().wrestlerId}`).set(patch, { merge: true });
+      await db.doc(`wrestlers/${id}`).set(patch, { merge: true });
+      await db.doc(`wrestlerPrivate/${id}`).set({ name }, { merge: true });
       result.updated++;
     } else {
       const wRef = db.collection("wrestlers").doc();
-      const slug = await uniqueSlug(slugify(name), wRef.id);
+      const display = displayFor(name);
       const batch = db.batch();
       batch.set(wRef, {
-        name, slug, weight, photoUrl: "", photoCutout: false, askText: defaultAsk(name.split(/\s+/)[0]),
-        active: true, raisedCents: 0, daysPaid: 0, sponsorCount: 0, createdAt: FieldValue.serverTimestamp(),
+        displayName: display, slug: slugify(display), weight, photoUrl: "", photoCutout: false, photoConsent: false,
+        askText: defaultAsk(firstOf(name)), active: true, published: false,
+        raisedCents: 0, daysPaid: 0, sponsorCount: 0, createdAt: FieldValue.serverTimestamp(),
       });
       batch.set(mapRef, { wrestlerId: wRef.id });
-      batch.set(db.doc(`wrestlerPrivate/${wRef.id}`), { email });
+      batch.set(db.doc(`wrestlerPrivate/${wRef.id}`), { email, name });
       await batch.commit();
       result.added++;
     }
@@ -341,30 +471,38 @@ exports.adminImportRoster = onCall(OPTS, async (req) => {
 });
 
 exports.adminSaveWrestler = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const d = req.data || {};
-  const id = clean(d.id, 40);
-  if (!id) throw new HttpsError("invalid-argument", "Add athletes with the roster CSV so each one gets a login.");
+  if (!d.id) throw new HttpsError("invalid-argument", "Add athletes with the roster CSV so each one gets a login.");
+  const id = cleanId(d.id);
   const snap = await db.doc(`wrestlers/${id}`).get();
   if (!snap.exists) throw new HttpsError("not-found", "Athlete not found.");
   const patch = {};
-  if (d.name != null) patch.name = clean(d.name, 40) || "Wrestler";
+  if (d.name != null) {
+    const name = clean(d.name, 40) || "Athlete";
+    await db.doc(`wrestlerPrivate/${id}`).set({ name }, { merge: true });
+    patch.displayName = displayFor(name);
+    patch.slug = slugify(patch.displayName);
+  }
   if (d.weight != null) patch.weight = cleanDetail(d.weight);
   if (d.askText != null) patch.askText = cleanText(d.askText, MAX_ASK);
-  if (d.photoUrl != null) { patch.photoUrl = checkPhotoUrl(clean(d.photoUrl, 600)); patch.photoCutout = !!d.photoCutout; }
+  if (d.photoUrl != null) Object.assign(patch, photoPatch(d));
   if (d.active != null) patch.active = !!d.active;
-  if (d.slug != null && d.slug !== snap.data().slug) {
-    const slug = clean(d.slug, 40).toLowerCase();
-    if (slug.length < 2 || !SLUG_RE.test(slug) || RESERVED_SLUGS.has(slug)) throw new HttpsError("invalid-argument", "Links can use lowercase letters, numbers, and dashes, like addison-clark.");
-    if ((await uniqueSlug(slug, id)) !== slug) throw new HttpsError("already-exists", "Another athlete already has that link.");
-    patch.slug = slug;
-  }
   await db.doc(`wrestlers/${id}`).set(patch, { merge: true });
-  return { id, slug: patch.slug || snap.data().slug };
+  return { id };
+});
+
+/* Organizers can take a page down; only the athlete (with a parent) can put it up. */
+exports.adminSetPublished = onCall(OPTS, async (req) => {
+  await requireOrganizer(req);
+  const id = cleanId(req.data?.id);
+  if (req.data?.published !== false) throw new HttpsError("permission-denied", "Only the athlete can publish her page, with a parent's approval.");
+  await db.doc(`wrestlers/${id}`).set({ published: false }, { merge: true });
+  return { ok: true };
 });
 
 exports.adminSetOffDay = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const dayKey = clean(req.data?.dayKey, 10);
   const off = !!req.data?.off;
   return db.runTransaction(async (tx) => {
@@ -372,7 +510,7 @@ exports.adminSetOffDay = onCall(OPTS, async (req) => {
     const day = season.days.find((x) => x.key === dayKey);
     if (!day || day.kind !== "practice") throw new HttpsError("invalid-argument", "Only practice days can be turned off.");
     if (off) {
-      const q = await tx.get(db.collection("claims").where("dayKey", "==", dayKey));
+      const q = await tx.get(db.collectionGroup("claims").where("dayKey", "==", dayKey));
       if (q.docs.some((s) => claimIsTaken(s.data(), Date.now()))) throw new HttpsError("failed-precondition", "Someone already sponsored this day. Void that sponsorship first.");
     }
     const set = new Set(season.offDays || []);
@@ -383,27 +521,29 @@ exports.adminSetOffDay = onCall(OPTS, async (req) => {
 });
 
 exports.adminRecordPayment = onCall(OPTS, async (req) => {
-  requireAdmin(req);
-  const method = ["cash", "check", "venmo", "other"].includes(req.data?.method) ? req.data.method : "cash";
-  const { orderId } = await db.runTransaction((tx) => placeOrder(tx, req.data || {}, { method }));
+  await requireOrganizer(req);
+  const method = ["cash", "check", "venmo", "cashapp", "paypalme", "zelle", "other"].includes(req.data?.method) ? req.data.method : "cash";
+  const { orderId } = await db.runTransaction((tx) => placeOrder(tx, req.data || {}, { method, publicOrder: false }));
   const r = await markOrderPaid(orderId, { provider: method, recordedBy: who(req), at: Date.now() });
   return { ...r, orderId };
 });
 
 exports.adminConfirmOrder = onCall(OPTS, async (req) => {
-  requireAdmin(req);
-  return markOrderPaid(clean(req.data?.orderId, 40), { provider: "manual", recordedBy: who(req), at: Date.now() });
+  await requireOrganizer(req);
+  const orderId = clean(req.data?.orderId, 40);
+  const o = (await db.doc(`orders/${orderId}`).get()).data();
+  return markOrderPaid(orderId, { provider: (o && o.method) || "manual", recordedBy: who(req), at: Date.now() });
 });
 
 exports.adminVoidOrder = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const orderId = clean(req.data?.orderId, 40);
   return db.runTransaction(async (tx) => {
     const ref = db.doc(`orders/${orderId}`);
     const o = (await tx.get(ref)).data();
     if (!o) throw new HttpsError("not-found", "Order not found.");
     if (o.status === "void") return { ok: true };
-    const refs = o.dayKeys.map((k) => db.doc(`claims/${claimId(o.wrestlerId, k)}`));
+    const refs = o.dayKeys.map((k) => claimRef(o.wrestlerId, k));
     const snaps = await Promise.all(refs.map((r) => tx.get(r)));
     const msgRef = db.doc(`messages/${orderId}`);
     const msg = await tx.get(msgRef);
@@ -420,7 +560,7 @@ exports.adminVoidOrder = onCall(OPTS, async (req) => {
 
 /* Coaches read every note before an athlete can open it. Approving a note whose day has passed opens it right away. */
 exports.adminModerate = onCall(OPTS, async (req) => {
-  requireAdmin(req);
+  await requireOrganizer(req);
   const ref = db.doc(`messages/${clean(req.data?.messageId, 40)}`);
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError("not-found", "Note not found.");
@@ -429,9 +569,9 @@ exports.adminModerate = onCall(OPTS, async (req) => {
   const text = req.data?.text != null ? cleanText(req.data.text, MAX_MESSAGE) : m.text;
   const due = m.revealAt.toMillis() <= Date.now();
   await ref.update({ status: approve ? "approved" : "rejected", text, released: approve && due, moderatedBy: who(req) });
-  const claimRef = db.doc(`claims/${claimId(m.wrestlerId, m.revealDay)}`);
-  const claim = await claimRef.get();
-  if (claim.exists && claim.data().orderId === m.orderId) await claimRef.update({ hasNote: approve });
+  const cRef = claimRef(m.wrestlerId, m.revealDay);
+  const claim = await cRef.get();
+  if (claim.exists && claim.data().orderId === m.orderId) await cRef.update({ hasNote: approve });
   return { ok: true, released: approve && due };
 });
 
@@ -445,3 +585,23 @@ exports.releaseMessages = onSchedule({ schedule: `0 ${REVEAL_HOUR} * * *`, timeZ
     await batch.commit();
   }
 });
+
+/* Retention (promised in docs/privacy.html): 90 days after the season's last day, delete athlete and sponsor data,
+   unless an organizer has renewed the team (config/season.renewedFor set to a later season). Totals stay as numbers. */
+const RETENTION_DAYS = 90;
+async function purgeIfExpired(nowMs) {
+  const snap = await db.doc("config/season").get();
+  if (!snap.exists) return { purged: false };
+  const lastDay = TEAM.schedule.lastDay;
+  const due = Date.parse(lastDay + "T00:00:00Z") + RETENTION_DAYS * 864e5;
+  if (nowMs < due || snap.data().renewedFor) return { purged: false };
+  let n = 0;
+  const wipe = async (q) => { const r = await q.get(); for (const d of r.docs) { await d.ref.delete(); n++; } };
+  const ws = await db.collection("wrestlers").get();
+  for (const w of ws.docs) { await wipe(db.collection(`wrestlers/${w.id}/claims`)); await w.ref.delete(); n++; }
+  for (const c of ["wrestlerPrivate", "rosterEmails", "orders", "messages"]) await wipe(db.collection(c));
+  await db.doc("config/season").set({ purgedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { purged: true, deleted: n };
+}
+exports.retention = onSchedule({ schedule: "30 3 * * *", timeZone: TZ }, async () => { await purgeIfExpired(Date.now()); });
+
