@@ -13,13 +13,18 @@ function buildSeasonDays(team = TEAM) {
       post: !!e.postseason, end: e.end || null, priceCents: e.priceCents || null,
     };
   }
+  // Coaches can add practices on non-practice weekdays (a Saturday session, say).
+  const extra = new Set(s.extraPractices || []);
   const days = [];
-  const d = new Date(s.practiceStart + "T00:00:00Z");
-  const stop = new Date(s.lastDay + "T00:00:00Z");
+  const first = [s.practiceStart, ...Object.keys(ev)].sort()[0];
+  const last = [s.lastDay, ...Object.keys(ev), ...[...extra]].sort().pop();
+  const d = new Date(first + "T00:00:00Z");
+  const stop = new Date(last + "T00:00:00Z");
   for (; d <= stop; d.setUTCDate(d.getUTCDate() + 1)) {
     const key = d.toISOString().slice(0, 10);
     if (ev[key]) { days.push(ev[key]); continue; }
-    if (key > s.practiceEnd || !weekdays.has(d.getUTCDay()) || breaks[key]) continue;
+    if (breaks[key]) continue;
+    if (!extra.has(key) && (key < s.practiceStart || key > s.practiceEnd || !weekdays.has(d.getUTCDay()))) continue;
     days.push({ key, kind: "practice", name: "Practice", where: "", label: (team.labels && team.labels.practice) || "Practice", post: false, end: null, priceCents: null });
   }
   return days;

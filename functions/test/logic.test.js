@@ -311,6 +311,34 @@ const ATTEST = ["authority", "approval", "roster", "consent", "marks", "funds", 
     } finally { params.PAYMENT_MODE = "mock"; }
   });
 
+  /* ---- schedule editor ---- */
+  await t("schedule editor: coaches add a meet and a Saturday practice; reloading keeps their edits", async () => {
+    const base = get("config/season").schedule.events;
+    const sat = DAYS.map((d) => d.key).concat(P).find((k) => new Date(k + "T00:00:00Z").getUTCDay() === 1);
+    const saturday = new Date(Date.parse(sat + "T00:00:00Z") + 5 * 864e5).toISOString().slice(0, 10);
+    await fn.adminSaveSchedule({ ...admin, data: { events: [...base, { date: P[5], name: "Test Invite", where: "Here" }], extraPractices: [saturday] } });
+    const days = get("config/season").days;
+    assert.strictEqual(days.find((x) => x.key === P[5]).kind, "event");
+    assert.strictEqual(days.find((x) => x.key === saturday).kind, "practice");
+    await fn.adminSetup({ ...admin, data: {} });
+    assert.strictEqual(get("config/season").days.find((x) => x.key === P[5]).name, "Test Invite", "reload keeps the coach's schedule");
+    await expectErr(fn.adminSaveSchedule({ auth: { uid: "s", token: {} }, data: { events: base } }), "permission-denied");
+  });
+  await t("schedule editor: sponsored days can be renamed but not removed, re-typed or re-priced; bad input refused", async () => {
+    const base = get("config/season").schedule.events;
+    const held = POST[0].key; // held by an earlier sponsor
+    await fn.adminSaveSchedule({ ...admin, data: { events: base.map((e) => e.date === held ? { ...e, where: "Rhinelander HS" } : e) } });
+    assert.strictEqual(get("config/season").days.find((x) => x.key === held).where, "Rhinelander HS");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: base.map((e) => e.date === held ? { ...e, priceCents: e.priceCents + 500 } : e) } }), "failed-precondition");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: base.filter((e) => e.date !== held) } }), "failed-precondition");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: [...base, { date: P[2], name: "Over a paid practice" }] } }), "failed-precondition");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: [...base, { date: base[0].date, name: "Twin" }] } }), "invalid-argument");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: [...base, { date: "2026-02-31", name: "Bad" }] } }), "invalid-argument");
+    await expectErr(fn.adminSaveSchedule({ ...admin, data: { events: [...base, { date: P[6], name: "Free?", postseason: true }] } }), "invalid-argument");
+    await fn.adminSaveSchedule({ ...admin, data: { events: TEAM.schedule.events } });
+    assert.strictEqual(get("config/season").days.length, DAYS.length, "back to the original schedule");
+  });
+
   /* ---- retention ---- */
   await t("retention: nothing is deleted before 90 days after the last day; after that, athlete and sponsor data is gone", async () => {
     const realNow = Date.now, last = Date.parse(TEAM.schedule.lastDay + "T00:00:00Z");

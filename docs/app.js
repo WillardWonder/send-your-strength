@@ -22,11 +22,13 @@ const line=k=>fill(C.brand.lines[k],{obj:PN.obj,sub:PN.sub,pos:PN.pos,athlete:A.
 const pw=()=>C.labels.practice.toLowerCase();
 const isWrestling=()=>/wrestl/i.test(C.team.sport||"");
 const detailText=w=>w.weight?((A.detail.prefix||"")+w.weight+(A.detail.suffix?" "+A.detail.suffix:"")):"";
-function seasonDays(){const s=C.schedule,wk=new Set(s.practiceWeekdays||[1,2,3,4,5]),br=s.breaks||{},ev={};
+/* Same rules as functions/schedule.js: weekday practices, organizer-added extra practices, events, breaks. */
+function seasonDays(sched){const s=sched||C.schedule,wk=new Set(s.practiceWeekdays||[1,2,3,4,5]),br=s.breaks||{},ev={},extra=new Set(s.extraPractices||[]);
   (s.events||[]).forEach(e=>ev[e.date]={key:e.date,kind:"event",name:e.name,where:e.where||"",post:!!e.postseason,end:e.end||null,label:e.label||e.name,priceCents:e.priceCents||null});
-  const out=[];const d=new Date(s.practiceStart+"T00:00:00Z"),stop=new Date(s.lastDay+"T00:00:00Z");
+  const out=[];const first=[s.practiceStart,...Object.keys(ev)].sort()[0],last=[s.lastDay,...Object.keys(ev),...extra].sort().pop();
+  const d=new Date(first+"T00:00:00Z"),stop=new Date(last+"T00:00:00Z");
   for(;d<=stop;d.setUTCDate(d.getUTCDate()+1)){const key=d.toISOString().slice(0,10);
-    if(ev[key]){out.push(ev[key]);continue}if(key>s.practiceEnd||!wk.has(d.getUTCDay())||br[key])continue;
+    if(ev[key]){out.push(ev[key]);continue}if(br[key])continue;if(!extra.has(key)&&(key<s.practiceStart||key>s.practiceEnd||!wk.has(d.getUTCDay())))continue;
     out.push({key,kind:"practice",name:"Practice",where:"",post:false,end:null,label:C.labels.practice})}return out}
 const DEFAULT_ASK=first=>fill(C.copy.defaultAsk,{first});
 /* Public pages show a display name (first name + last initial unless team.json says "full"). Same rule as the server. */
@@ -102,7 +104,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function makeDemoBackend(){
   const D=await (await fetch("demo.json",{cache:"no-store"})).json();
   const TODAY=D.today;
-  const season={days:seasonDays(),breaks:C.schedule.breaks||{},offDays:[],practicePriceCents:C.prices.practiceCents,eventMultiplier:C.prices.eventMultiplier,
+  const season={schedule:C.schedule,days:seasonDays(),breaks:C.schedule.breaks||{},offDays:[],practicePriceCents:C.prices.practiceCents,eventMultiplier:C.prices.eventMultiplier,
     rewardName:C.reward.name,rewardText:C.reward.text,payNote:C.payNote};
   const W=D.athletes.map(a=>{const dn=displayFor(a.name);return{id:a.id,slug:slugFor(dn),name:dn,displayName:dn,weight:String(a.weight||""),photoUrl:a.photo||"",photoCutout:!!a.photo,photoConsent:!!a.photo,askText:a.ask||DEFAULT_ASK(firstName(a.name)),active:true,published:a.published!==false,raisedCents:0,daysPaid:0,sponsorCount:0}});
   const emails=Object.fromEntries(D.athletes.map(a=>[a.id,a.email||""])),names=Object.fromEntries(D.athletes.map(a=>[a.id,a.name]));
@@ -159,6 +161,10 @@ async function makeDemoBackend(){
       const ex=Object.keys(emails).find(k=>emails[k]===em);const dn=displayFor(r.name);if(ex){Object.assign(W.find(w=>w.id===ex),{name:dn,displayName:dn,weight:r.weight||W.find(w=>w.id===ex).weight});names[ex]=r.name;updated++}
       else{const id="n"+(seq++);W.push({id,slug:slugFor(dn),name:dn,displayName:dn,weight:r.weight||"",photoUrl:"",photoCutout:false,photoConsent:false,askText:DEFAULT_ASK(firstName(r.name)),active:true,published:false,raisedCents:0,daysPaid:0,sponsorCount:0});emails[id]=em;names[id]=r.name;added++}});emit();return{added,updated,skipped}},
     async saveWrestler(p){const w=W.find(x=>x.id===p.id);if(p.name!=null){names[p.id]=p.name;p.displayName=p.name=displayFor(p.name);p.slug=slugFor(p.displayName)}if(p.photoUrl==="")Object.assign(p,{photoCutout:false,photoConsent:false});Object.assign(w,p);emit();return{id:p.id}},
+    async saveSchedule(events,extraPractices){await wait(300);const sched={...season.schedule,events,extraPractices};const nd=seasonDays(sched),nb=Object.fromEntries(nd.map(x=>[x.key,x]));
+      const bad=Object.values(claims).filter(c=>taken(c)&&(!nb[c.dayKey]||nb[c.dayKey].kind!==dayMap[c.dayKey].kind||price(c.dayKey)!==(nb[c.dayKey].priceCents||(nb[c.dayKey].kind==="event"?season.practicePriceCents*season.eventMultiplier:season.practicePriceCents)))).map(c=>c.dayKey);
+      if(bad.length)throw new Error("Someone already sponsored "+[...new Set(bad)].sort().join(", ")+". Those days can be renamed but not removed or changed. Void those sponsorships first.");
+      season.schedule=sched;season.days=nd;Object.keys(dayMap).forEach(k=>delete dayMap[k]);nd.forEach(x=>dayMap[x.key]=x);emit()},
     async setOffDay(k,off){if(off&&Object.values(claims).some(c=>c.dayKey===k&&taken(c)))throw new Error("Someone already sponsored this day. Void that sponsorship first.");season.offDays=off?[...season.offDays,k]:season.offDays.filter(x=>x!==k);emit()},
     async recordPayment(inp){const r=place(inp,inp.method);pay(r.orderId,inp.method,false);emit();return r},
     async confirmOrder(id){pay(id,"manual",false);emit()},
@@ -211,7 +217,7 @@ async function makeLiveBackend(){
         FS.onSnapshot(FS.query(FS.collection(db,"orders"),FS.orderBy("createdAt","desc"),FS.limit(300)),q=>{ords=q.docs.map(d=>({id:d.id,...d.data(),createdAt:ms(d.data().createdAt)}));push()},snapErr),
         FS.onSnapshot(FS.collection(db,"wrestlerPrivate"),q=>{emails={};names={};q.docs.forEach(d=>{emails[d.id]=d.data().email;names[d.id]=d.data().name});push()},snapErr)];
       return()=>u.forEach(f=>f())},
-    setup:()=>call("adminSetup",{}), saveSettings:s=>call("adminSettings",s), importRoster:rows=>call("adminImportRoster",{rows}),
+    setup:()=>call("adminSetup",{}), saveSettings:s=>call("adminSettings",s), saveSchedule:(events,extraPractices)=>call("adminSaveSchedule",{events,extraPractices}), importRoster:rows=>call("adminImportRoster",{rows}),
     saveWrestler:p=>call("adminSaveWrestler",p), setOffDay:(dayKey,off)=>call("adminSetOffDay",{dayKey,off}),
     recordPayment:inp=>call("adminRecordPayment",inp), confirmOrder:orderId=>call("adminConfirmOrder",{orderId}),
     voidOrder:orderId=>call("adminVoidOrder",{orderId}), moderate:(messageId,approve,text)=>call("adminModerate",{messageId,approve,text})};
@@ -652,7 +658,7 @@ function orgPanel(){const wrap=h("section",{class:"org",id:"organizer"});
       h("div",{class:"btns"},o.status==="pending"?h("button",{class:"btn blu mini",onclick:()=>api.confirmOrder(o.id).then(()=>toast("Marked paid")).catch(e=>toast(errText(e)))},"Money received"):null,
         o.status!=="void"?h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.voidOrder(o.id).then(()=>toast("Voided")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to void"}}},"Void"):null))))}
   else if(S.orgTab==="roster")wrap.append(rosterTools());
-  else{wrap.append(payTools());
+  else{wrap.append(payTools(),scheduleTools());
     const pp=h("input",{class:"inp",id:"s-price",type:"number",min:"1",max:"100",step:"1",value:String(S.season.practicePriceCents/100),style:"width:110px"});
     const rn=h("input",{class:"inp",id:"s-rn",value:S.season.rewardName}),rt=h("textarea",{class:"inp",id:"s-rt"}),pn=h("input",{class:"inp",id:"s-pn",value:S.season.payNote});rt.value=S.season.rewardText;
     const mt=S.season.match||{};const mn=h("input",{class:"inp",id:"s-mn",value:mt.name||"",placeholder:"e.g. a local business"}),mc=h("input",{class:"inp",id:"s-mc",type:"number",min:"0",step:"50",value:mt.capCents?String(mt.capCents/100):"",placeholder:"0",style:"width:130px"});
@@ -675,6 +681,34 @@ function orgTerms(){const err=h("p",{class:"err",role:"alert"});const boxes=ORG_
     h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn pri",onclick:async e=>{const ok=boxes.filter(b=>b.c.checked).map(b=>b.k);
       if(ok.length<ORG_ATTEST.length){err.textContent="Confirm every statement to continue.";return}
       e.target.disabled=true;try{await api.acceptOrganizerTerms(ok);S.auth={...S.auth,termsOk:true};toast("Thanks. Organizer tools are on.");render()}catch(er){err.textContent=errText(er);e.target.disabled=false}}},"I confirm all of these")))}
+
+/* Schedule editor. Starts from the season's current schedule; edits live in S.schedDraft until saved. */
+function scheduleTools(){const cur=S.season.schedule||C.schedule;
+  if(!S.schedDraft)S.schedDraft={events:JSON.parse(JSON.stringify(cur.events||[])),extra:[...(cur.extraPractices||[])],newExtra:""};
+  const D=S.schedDraft,err=h("p",{class:"err",role:"alert"});
+  const row=(e,i)=>{const up=(k,v)=>{e[k]=v};
+    return h("div",{class:"q",style:"display:grid;gap:8px"},
+      h("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:end"},
+        h("label",{class:"field",for:"ev-d-"+i},"Date",h("input",{class:"inp",type:"date",id:"ev-d-"+i,value:e.date||"",onchange:x=>up("date",x.target.value)})),
+        h("label",{class:"field",for:"ev-e-"+i},h("span",null,"Last day ",h("small",null,"(multi-day only)")),h("input",{class:"inp",type:"date",id:"ev-e-"+i,value:e.end||"",onchange:x=>up("end",x.target.value)})),
+        h("label",{class:"field",for:"ev-n-"+i,style:"flex:1;min-width:180px"},"Name",h("input",{class:"inp",id:"ev-n-"+i,value:e.name||"",maxlength:"60",placeholder:"e.g. Lakeland Invite",oninput:x=>up("name",x.target.value)}))),
+      h("div",{style:"display:flex;gap:8px;flex-wrap:wrap;align-items:end"},
+        h("label",{class:"field",for:"ev-w-"+i,style:"flex:1;min-width:180px"},"Where",h("input",{class:"inp",id:"ev-w-"+i,value:e.where||"",maxlength:"60",placeholder:"e.g. Minocqua",oninput:x=>up("where",x.target.value)})),
+        h("label",{class:"check"},h("input",{type:"checkbox",checked:e.postseason?true:null,onchange:x=>{up("postseason",x.target.checked);render()}}),"Postseason"),
+        e.postseason?h("label",{class:"field",for:"ev-p-"+i},"Price ($)",h("input",{class:"inp",type:"number",min:"1",step:"1",id:"ev-p-"+i,style:"width:100px",value:e.priceCents?String(e.priceCents/100):"",oninput:x=>up("priceCents",Math.round(+x.target.value*100))})):null,
+        h("button",{class:"btn mini",onclick:()=>{D.events.splice(i,1);render()}},"Remove")))};
+  const nx=h("input",{class:"inp",type:"date",id:"ex-new",value:D.newExtra,onchange:x=>D.newExtra=x.target.value});
+  return h("div",{style:"display:grid;gap:10px;max-width:760px;margin-top:22px"},h("h3",{style:"margin:0"},"Schedule"),
+    h("p",{class:"mod",style:"margin:0"},"Add or change "+C.labels.event.toLowerCase()+"s, and add a practice on a day you don't normally practice. "+C.labels.practice+"s run "+short(cur.practiceStart)+" to "+short(cur.practiceEnd)+" on the usual weekdays; turn single days off with the button below. Days someone already sponsored can be renamed but not moved or removed."),
+    D.events.map(row),
+    h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn",onclick:()=>{D.events.push({date:"",name:"",where:""});render()}},"Add a "+C.labels.event.toLowerCase())),
+    h("div",{style:"display:flex;gap:8px;align-items:end;flex-wrap:wrap"},h("label",{class:"field",for:"ex-new"},"Extra "+C.labels.practice.toLowerCase()+" day",nx),h("button",{class:"btn",onclick:()=>{if(D.newExtra&&!D.extra.includes(D.newExtra)){D.extra.push(D.newExtra);D.extra.sort()}D.newExtra="";render()}},"Add")),
+    D.extra.length?h("div",{style:"display:flex;gap:6px;flex-wrap:wrap"},D.extra.map(k=>h("button",{class:"btn mini",title:"Remove",onclick:()=>{D.extra=D.extra.filter(x=>x!==k);render()}},F(k,{weekday:"short",month:"short",day:"numeric"})+" ×"))):null,err,
+    h("div",{class:"btns",style:"justify-content:flex-start"},
+      h("button",{class:"btn blu",onclick:async x=>{const evs=D.events.filter(e=>e.date||e.name).map(e=>({date:e.date,end:e.end||"",name:(e.name||"").trim(),where:(e.where||"").trim(),label:e.label||"",postseason:!!e.postseason,priceCents:e.priceCents||null}));
+        if(evs.some(e=>!e.date||!e.name)){err.textContent="Each "+C.labels.event.toLowerCase()+" needs a date and a name.";return}
+        x.target.disabled=true;try{await api.saveSchedule(evs,D.extra);S.schedDraft=null;toast("Schedule saved");render()}catch(er){err.textContent=errText(er);x.target.disabled=false}}},"Save schedule"),
+      h("button",{class:"btn",onclick:()=>{S.schedDraft=null;render()}},"Undo changes")))}
 
 /* The team's own payment accounts. Sponsors pay these directly; this site never touches the money. */
 function payTools(){const cur=Object.fromEntries(S.payments.links.map(l=>[l.type,l.value]));

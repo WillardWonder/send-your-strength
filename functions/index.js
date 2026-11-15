@@ -365,15 +365,21 @@ exports.acceptOrganizerTerms = onCall(OPTS, async (req) => {
   return { ok: true };
 });
 
+/* The season's schedule: team.json's to start, then whatever organizers save with the schedule editor. */
+const scheduleOf = (season) => (season && season.schedule) || TEAM.schedule;
+const daysFor = (schedule) => buildSeasonDays({ ...TEAM, schedule });
+
 exports.adminSetup = onCall(OPTS, async (req) => {
   await requireOrganizer(req);
   const ref = db.doc("config/season");
   const snap = await ref.get();
   const prev = snap.exists ? snap.data() : {};
+  const schedule = scheduleOf(prev);
   await ref.set({
     season: TEAM.team.season,
-    days: buildSeasonDays(),
-    breaks: TEAM.schedule.breaks || {},
+    schedule,
+    days: daysFor(schedule),
+    breaks: schedule.breaks || {},
     offDays: prev.offDays || [],
     practicePriceCents: prev.practicePriceCents || TEAM.prices.practiceCents,
     eventMultiplier: TEAM.prices.eventMultiplier,
@@ -499,6 +505,61 @@ exports.adminSetPublished = onCall(OPTS, async (req) => {
   if (req.data?.published !== false) throw new HttpsError("permission-denied", "Only the athlete can publish her page, with a parent's approval.");
   await db.doc(`wrestlers/${id}`).set({ published: false }, { merge: true });
   return { ok: true };
+});
+
+/* Schedule editor: organizers add, move, rename or remove meets and add extra practice days.
+   A day someone already sponsored can be renamed, but never removed or changed to a different kind or price. */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const validDate = (k) => DATE_RE.test(k) && !Number.isNaN(Date.parse(k + "T00:00:00Z")) && new Date(k + "T00:00:00Z").toISOString().slice(0, 10) === k;
+exports.adminSaveSchedule = onCall(OPTS, async (req) => {
+  await requireOrganizer(req);
+  const d = req.data || {};
+  const base = TEAM.schedule;
+  const lo = Date.parse(base.practiceStart + "T00:00:00Z") - 60 * 864e5, hi = Date.parse(base.lastDay + "T00:00:00Z") + 60 * 864e5;
+  const inSeason = (k) => validDate(k) && Date.parse(k + "T00:00:00Z") >= lo && Date.parse(k + "T00:00:00Z") <= hi;
+  const rows = Array.isArray(d.events) ? d.events.slice(0, 80) : [];
+  const events = [];
+  for (const r of rows) {
+    const date = clean(r && r.date, 10);
+    if (!inSeason(date)) throw new HttpsError("invalid-argument", `${date || "A date"} isn't a date in this season.`);
+    if (events.some((e) => e.date === date)) throw new HttpsError("invalid-argument", `Two events are on ${date}. Keep one per day.`);
+    const name = clean(r.name, 60);
+    if (!name) throw new HttpsError("invalid-argument", `Give the ${date} event a name.`);
+    const e = { date, name, where: clean(r.where, 60), label: clean(r.label, 20) || name.slice(0, 20) };
+    const end = clean(r.end, 10);
+    if (end) {
+      if (!inSeason(end) || end <= date || Date.parse(end) - Date.parse(date) > 6 * 864e5) throw new HttpsError("invalid-argument", `The ${name} end date has to be within a week after it starts.`);
+      e.end = end;
+    }
+    if (r.postseason) {
+      e.postseason = true;
+      const cents = Math.round(Number(r.priceCents));
+      if (!(cents >= 100 && cents <= 100000)) throw new HttpsError("invalid-argument", `Set a price for ${name}.`);
+      e.priceCents = cents;
+    }
+    events.push(e);
+  }
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  const extraPractices = [...new Set((Array.isArray(d.extraPractices) ? d.extraPractices : []).map((k) => clean(k, 10)))].filter(Boolean).sort().slice(0, 60);
+  for (const k of extraPractices) if (!inSeason(k)) throw new HttpsError("invalid-argument", `${k} isn't a date in this season.`);
+  return db.runTransaction(async (tx) => {
+    const season = await getSeason(tx);
+    const claims = await tx.get(db.collectionGroup("claims"));
+    const schedule = { ...scheduleOf(season), events, extraPractices };
+    const days = daysFor(schedule);
+    const oldBy = Object.fromEntries(season.days.map((x) => [x.key, x]));
+    const newBy = Object.fromEntries(days.map((x) => [x.key, x]));
+    const now = Date.now();
+    const blocked = new Set();
+    for (const c of claims.docs.map((s) => s.data())) {
+      if (!claimIsTaken(c, now)) continue;
+      const was = oldBy[c.dayKey], is = newBy[c.dayKey];
+      if (!is || !was || is.kind !== was.kind || priceFor(is, season) !== priceFor(was, season)) blocked.add(c.dayKey);
+    }
+    if (blocked.size) throw new HttpsError("failed-precondition", `Someone already sponsored ${[...blocked].sort().join(", ")}. Those days can be renamed but not removed or changed. Void those sponsorships first.`, { blocked: [...blocked] });
+    tx.update(db.doc("config/season"), { schedule, days });
+    return { ok: true, days: days.length };
+  });
 });
 
 exports.adminSetOffDay = onCall(OPTS, async (req) => {
