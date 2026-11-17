@@ -20,7 +20,7 @@
  *   - A page stays hidden until the athlete (with a parent) accepts the athlete terms and publishes it.
  *     Organizers can unpublish, never publish.
  *   - Photos are optional and need a parent-approval confirmation.
- *   - Organizers must accept the organizer terms (8 attestations) before any organizer tool works.
+ *   - Organizers must accept the organizer terms (one checkbox: compliance, responsibility, release) before any organizer tool works.
  *
  * Money flow (the site never holds money)
  *   createOrder        holds the picked days, prices them server-side, records which payment option the sponsor chose
@@ -51,8 +51,8 @@ const PLATFORM_FEE_PERCENT = defineString("PLATFORM_FEE_PERCENT", { default: "0"
 const FEE_ON_LINK_PAYMENTS = defineString("FEE_ON_LINK_PAYMENTS", { default: "no" });
 
 // Bump this whenever docs/terms.html or docs/privacy.html changes in substance: everyone re-accepts.
-const TERMS_VERSION = "2026-11-15";
-const ORG_ATTESTATIONS = ["authority", "approval", "roster", "consent", "marks", "funds", "moderation", "fee"];
+const TERMS_VERSION = "2026-11-17";
+const ORG_ATTESTATIONS = ["terms"];
 
 const holdMinutes = () => (PAYMENT_MODE.value() === "mock" ? 15 : 72 * 60);
 const MAX_DAYS_PER_ORDER = 40;
@@ -360,7 +360,7 @@ exports.acceptOrganizerTerms = onCall(OPTS, async (req) => {
   if (d.version !== TERMS_VERSION) throw new HttpsError("failed-precondition", "The terms changed. Reload the page and read them again.");
   const attest = Array.isArray(d.attest) ? d.attest.map((x) => clean(x, 20)) : [];
   const missing = ORG_ATTESTATIONS.filter((a) => !attest.includes(a));
-  if (missing.length) throw new HttpsError("invalid-argument", "Confirm every statement to continue.", { missing });
+  if (missing.length) throw new HttpsError("invalid-argument", "Check the box to agree to the terms.", { missing });
   await orgTermsRef(req.auth.uid).set({ uid: req.auth.uid, email: req.auth.token.email || "", version: TERMS_VERSION, attest: ORG_ATTESTATIONS, at: FieldValue.serverTimestamp() });
   return { ok: true };
 });

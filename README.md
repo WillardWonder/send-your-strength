@@ -88,7 +88,7 @@ The site never holds or moves money. Sponsors pay the team directly.
 - **Display names.** Public pages show first name and last initial (set `athletes.nameDisplay` to `"full"` in `team.json` for full names). Full names and emails are organizer-only.
 - **Publishing.** Every page starts hidden. The athlete publishes it from her locker after a parent or guardian approves the terms. Organizers can take a page down but can't publish one.
 - **Photos** are optional and need a parent's approval. Without one, the page shows the athlete's initial.
-- **Terms.** Organizers confirm 8 statements (authority, AD and booster approval, consent, logo permission, responsibility for funds, and more) before any organizer tool works. Sponsors agree at checkout. Every acceptance is recorded. `docs/terms.html` and `docs/privacy.html` are drafts for legal review; bump `TERMS_VERSION` in `functions/index.js` when they change.
+- **Terms.** Organizers check one box agreeing to the Terms (they confirm the fundraiser follows every applicable law and school, district, athletic-association and booster policy, take responsibility for it and its money, and release and indemnify us) before any organizer tool works. Sponsors agree at checkout. Every acceptance is recorded. `docs/terms.html` and `docs/privacy.html` are drafts for legal review; bump `TERMS_VERSION` in `functions/index.js` when they change.
 - **Retention.** A daily job deletes athlete and sponsor data 90 days after the season's last day unless the team renews (`config/season.renewedFor`).
 
 ## Security

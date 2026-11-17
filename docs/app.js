@@ -35,14 +35,7 @@ const DEFAULT_ASK=first=>fill(C.copy.defaultAsk,{first});
 const displayFor=n=>{const p=String(n||"").trim().split(/\s+/).filter(Boolean);if(!p.length)return A.One;if((C.athletes&&C.athletes.nameDisplay)==="full"||p.length===1)return p.join(" ");return p[0]+" "+p[p.length-1][0].toUpperCase()+"."};
 const slugFor=s=>String(s||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40)||"athlete";
 const feeText=(pct,to)=>pct>0?pct+"% of each payment supports "+C.brand.name+", the platform that runs this page. The rest goes to "+to+".":"";
-const ORG_ATTEST=[["authority","I'm authorized by the school and the booster organization to run this fundraiser."],
-  ["approval","The school's athletic director and the booster organization approved the fundraiser, what's shown about each athlete, who receives the money, and the platform fee."],
-  ["roster","I have the authority to provide athletes' names and school emails."],
-  ["consent","I'll get a parent's or guardian's consent for each athlete under school policy, and check the school's media opt-out list before any photo is posted."],
-  ["marks","We have permission to use the school's name, logo, and marks."],
-  ["funds","The receiving organization is responsible for the money: its use, receipts, taxes, refunds, and disputes."],
-  ["moderation","I'll read sponsor notes before athletes see them."],
-  ["fee","I accept the platform fee as disclosed."]];
+const ORG_ATTEST=[["terms","I agree to the Terms of Use. I confirm this fundraiser follows every rule and policy that applies to it (state law, the school and district, the athletic association, and the booster organization), that my team is responsible for it and for the money it raises, and that I won't hold Send Your Strength or Artificial Intelligence Consulting LLC liable."]];
 const PAY_LABEL={venmo:"Venmo",cashapp:"Cash App",paypalme:"PayPal",zelle:"Zelle",check:"Check or cash",manual:"Pay the team"};
 const dollars=c=>c%100?(c/100).toFixed(2):String(c/100);
 const payUrl=(o,cents)=>o.type==="venmo"?"https://venmo.com/u/"+encodeURIComponent(o.value):o.type==="cashapp"?"https://cash.app/"+o.value+"/"+dollars(cents):o.type==="paypalme"?"https://www.paypal.me/"+encodeURIComponent(o.value)+"/"+dollars(cents):"";
@@ -108,7 +101,7 @@ async function makeDemoBackend(){
     rewardName:C.reward.name,rewardText:C.reward.text,payNote:C.payNote};
   const W=D.athletes.map(a=>{const dn=displayFor(a.name);return{id:a.id,slug:slugFor(dn),name:dn,displayName:dn,weight:String(a.weight||""),photoUrl:a.photo||"",photoCutout:!!a.photo,photoConsent:!!a.photo,askText:a.ask||DEFAULT_ASK(firstName(a.name)),active:true,published:a.published!==false,raisedCents:0,daysPaid:0,sponsorCount:0}});
   const emails=Object.fromEntries(D.athletes.map(a=>[a.id,a.email||""])),names=Object.fromEntries(D.athletes.map(a=>[a.id,a.name]));
-  const PAY={links:D.payments||[]},FEE=D.feePercent||0,TERMS="2026-11-15";let orgTerms=false;
+  const PAY={links:D.payments||[]},FEE=D.feePercent||0,TERMS="2026-11-17";let orgTerms=false;
   const claims={},orders={},messages={};let seq=1;const L=new Set();const emit=()=>L.forEach(f=>f());
   const dayMap=Object.fromEntries(season.days.map(d=>[d.key,d]));
   const price=k=>dayMap[k].priceCents||(dayMap[k].kind==="event"?season.practicePriceCents*season.eventMultiplier:season.practicePriceCents);
@@ -146,7 +139,7 @@ async function makeDemoBackend(){
     async mockPay(id){await wait(1000);const r=pay(id,"mock",false);emit();return r},
     onAuth(cb){AL.add(cb);cb(auth)},
     demoAs(view){auth=view==="admin"?{signedIn:true,admin:true,wrestlerId:null,email:"coach@example.org",termsOk:orgTerms}:view==="athlete"?{signedIn:true,admin:false,wrestlerId:FEATURED,email:emails[FEATURED],termsOk:false}:{signedIn:false,admin:false,wrestlerId:null,email:"",termsOk:false};pushAuth()},
-    async acceptOrganizerTerms(attest){await wait(300);if(ORG_ATTEST.some(([k])=>!attest.includes(k)))throw new Error("Confirm every statement to continue.");orgTerms=true;auth={...auth,termsOk:true};pushAuth()},
+    async acceptOrganizerTerms(attest){await wait(300);if(ORG_ATTEST.some(([k])=>!attest.includes(k)))throw new Error("Check the box to agree to the terms.");orgTerms=true;auth={...auth,termsOk:true};pushAuth()},
     async publish(parentApproved){if(parentApproved!==true)throw new Error("A parent or guardian needs to approve before you publish.");W.find(x=>x.id===auth.wrestlerId).published=true;emit()},
     async unpublish(){W.find(x=>x.id===auth.wrestlerId).published=false;emit()},
     async setPublished(id,v){if(v)throw new Error("Only the athlete can publish her page.");W.find(x=>x.id===id).published=false;emit()},
@@ -673,14 +666,14 @@ function orgPanel(){const wrap=h("section",{class:"org",id:"organizer"});
         h("button",{class:"btn",onclick:()=>api.setup().then(()=>toast("Schedule reloaded")).catch(e=>toast(errText(e)))},"Reload schedule"))))}
   return wrap}
 
-/* Organizer terms: every statement must be confirmed before any organizer tool works (the server enforces it too). */
+/* Organizer terms: one agreement, required before any organizer tool works (the server enforces it too). */
 function orgTerms(){const err=h("p",{class:"err",role:"alert"});const boxes=ORG_ATTEST.map(([k,t])=>{const c=h("input",{type:"checkbox","data-k":k});return{k,c,row:h("label",{class:"check",style:"align-items:flex-start"},c,h("span",null,t))}});
   return h("div",{class:"card",style:"margin-top:14px;max-width:760px"},h("h3",null,"Before you start"),
-    h("p",null,"Read the ",h("a",{href:"terms.html",target:"_blank",rel:"noopener"},"terms")," and ",h("a",{href:"privacy.html",target:"_blank",rel:"noopener"},"privacy policy"),", then confirm each statement. This is recorded with your email and the date."),
+    h("p",null,"Read the ",h("a",{href:"terms.html",target:"_blank",rel:"noopener"},"terms")," and ",h("a",{href:"privacy.html",target:"_blank",rel:"noopener"},"privacy policy"),", then check the box. Your agreement is recorded with your email and the date."),
     h("div",{style:"display:grid;gap:10px"},boxes.map(b=>b.row)),err,
     h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn pri",onclick:async e=>{const ok=boxes.filter(b=>b.c.checked).map(b=>b.k);
-      if(ok.length<ORG_ATTEST.length){err.textContent="Confirm every statement to continue.";return}
-      e.target.disabled=true;try{await api.acceptOrganizerTerms(ok);S.auth={...S.auth,termsOk:true};toast("Thanks. Organizer tools are on.");render()}catch(er){err.textContent=errText(er);e.target.disabled=false}}},"I confirm all of these")))}
+      if(ok.length<ORG_ATTEST.length){err.textContent="Check the box to agree to the terms.";return}
+      e.target.disabled=true;try{await api.acceptOrganizerTerms(ok);S.auth={...S.auth,termsOk:true};toast("Thanks. Organizer tools are on.");render()}catch(er){err.textContent=errText(er);e.target.disabled=false}}},"Agree and continue")))}
 
 /* Schedule editor. Starts from the season's current schedule; edits live in S.schedDraft until saved. */
 function scheduleTools(){const cur=S.season.schedule||C.schedule;

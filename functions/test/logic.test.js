@@ -100,7 +100,7 @@ const PC = TEAM.prices.practiceCents, EC = PC * TEAM.prices.eventMultiplier;
 const ORDER = [P[0], E[0].key], ORDER_AMT = PC + (E[0].priceCents || EC);
 const BREAK = Object.keys(TEAM.schedule.breaks || {})[0] || "2026-12-25";
 assert.ok(P.length >= 25 && E.length >= 1 && POST.length >= 1, "team.json needs at least 25 practices, 1 regular event and 1 postseason event for these tests");
-const ATTEST = ["authority", "approval", "roster", "consent", "marks", "funds", "moderation", "fee"];
+const ATTEST = ["terms"];
 
 (async () => {
   console.log("Send Your Strength function tests (" + TEAM.team.name + ")");
@@ -110,11 +110,11 @@ const ATTEST = ["authority", "approval", "roster", "consent", "marks", "funds", 
   await t("non-admin can't set up", () => expectErr(fn.adminSetup({ auth: { uid: "x", token: {} }, data: {} }), "permission-denied"));
   await t("organizer tools are locked until the organizer terms are accepted with every statement", async () => {
     await expectErr(fn.adminSetup({ ...admin, data: {} }), "failed-precondition");
-    await expectErr(fn.acceptOrganizerTerms({ ...admin, data: { version: V, attest: ATTEST.slice(1) } }), "invalid-argument");
+    await expectErr(fn.acceptOrganizerTerms({ ...admin, data: { version: V, attest: [] } }), "invalid-argument");
     await expectErr(fn.acceptOrganizerTerms({ ...admin, data: { version: "old", attest: ATTEST } }), "failed-precondition");
     await expectErr(fn.acceptOrganizerTerms({ auth: { uid: "x", token: {} }, data: { version: V, attest: ATTEST } }), "permission-denied");
     await fn.acceptOrganizerTerms({ ...admin, data: { version: V, attest: ATTEST } });
-    assert.strictEqual(get(`acceptances/org_coach_${V}`).attest.length, 8);
+    assert.strictEqual(get(`acceptances/org_coach_${V}`).attest.length, 1);
   });
   await t("setup writes the season from team.json", async () => {
     await fn.adminSetup({ ...admin, data: {} });
