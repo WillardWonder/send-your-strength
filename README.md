@@ -88,12 +88,18 @@ The site never holds or moves money. Sponsors pay the team directly.
 - **Display names.** Public pages show first name and last initial (set `athletes.nameDisplay` to `"full"` in `team.json` for full names). Full names and emails are organizer-only.
 - **Publishing.** Every page starts hidden. The athlete publishes it from her locker after a parent or guardian approves the terms. Organizers can take a page down but can't publish one.
 - **Photos** are optional and need a parent's approval. Without one, the page shows the athlete's initial.
+- **Updates (one-way).** From her locker, an athlete can post a short text update (500 characters) that shows on her page under "From <name>". It's one-way on purpose:
+  - A coach approves every update before anyone else sees it (Organizer → Updates), can fix a typo first, and can take a posted one down from the page.
+  - There is no reply, comment, reaction, or message path anywhere, and browsers can't write to the database at all.
+  - Emails, phone numbers, links and @handles are refused by the server, so an update can't open a side channel.
+  - Text only, so no photo location data. Updates show only while the page is published, are capped at 3 a day, and are deleted at retention.
 - **Terms.** Organizers check one box agreeing to the Terms (they confirm the fundraiser follows every applicable law and school, district, athletic-association and booster policy, take responsibility for it and its money, and release and indemnify us) before any organizer tool works. Sponsors agree at checkout. Every acceptance is recorded. `docs/terms.html` and `docs/privacy.html` are drafts for legal review; bump `TERMS_VERSION` in `functions/index.js` when they change.
 - **Retention.** A daily job deletes athlete and sponsor data 90 days after the season's last day unless the team renews (`config/season.renewedFor`).
 
 ## Security
 
 - **No browser writes.** Browsers can't write anything. Every change goes through a Cloud Function that checks who's calling, and prices are always recomputed on the server.
+- **Updates.** Public visitors can read only coach-approved updates, only on a published page. The athlete and organizers see every status.
 - **Private notes.** Notes are readable only by the athlete they're for (and organizers), only after a coach approves them and their morning arrives.
 - **Private contact info.** Donor contact info and school emails are readable by organizers only.
 - **Roles re-checked.** Roles are re-checked on every sign-in, so removing someone from `ADMIN_EMAILS` or the roster takes effect at their next sign-in.
@@ -114,6 +120,7 @@ These run the real server code against an in-memory database. They cover:
 - note release times in different time zones
 - voids, cash, and roster re-import
 - roles, links, photos, and rate limits
+- one-way updates: approval, contact-info blocking, daily cap, delete, take-down
 - template checks: config copies in sync, custom practice weekdays, default messages
 
 The Firestore and Storage rules aren't covered by these tests. Run them once in the Firebase console's Rules Playground before launch.

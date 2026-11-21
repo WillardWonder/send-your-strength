@@ -25,7 +25,16 @@ service cloud.firestore {
         allow read: if published(id) || isAdmin() || isWrestler(id);
         allow write: if false;
       }
+      // One-way updates the athlete posts. The public sees only coach-approved ("live") ones, and only while
+      // the page is published. Nobody can write here from a browser, so there's no reply or comment path.
+      match /updates/{u} {
+        allow read: if (resource.data.status == "live" && published(id)) || isAdmin() || isWrestler(id);
+        allow write: if false;
+      }
     }
+
+    // Organizers' queue of updates waiting for approval, across the team.
+    match /{path=**}/updates/{u} { allow read: if isAdmin(); }
 
     // Notes to an athlete: only that athlete can read them, and only once a coach approved them
     // and the morning release on their day has run. Organizers can read everything to moderate.

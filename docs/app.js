@@ -36,6 +36,10 @@ const displayFor=n=>{const p=String(n||"").trim().split(/\s+/).filter(Boolean);i
 const slugFor=s=>String(s||"").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40)||"athlete";
 const feeText=(pct,to)=>pct>0?pct+"% of each payment supports "+C.brand.name+", the platform that runs this page. The rest goes to "+to+".":"";
 const ORG_ATTEST=[["terms","I agree to the Terms of Use. I confirm this fundraiser follows every rule and policy that applies to it (state law, the school and district, the athletic association, and the booster organization), that my team is responsible for it and for the money it raises, and that I won't hold Send Your Strength or Artificial Intelligence Consulting LLC liable."]];
+/* One-way updates: same contact check as the server, so the athlete hears about it before she posts. */
+const UPDATE_MAX=500;
+const UPDATE_RULES=[[/[^\s@]+@[^\s@]+\.[^\s@]+/,"an email address"],[/\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(com|net|org|edu|io|me|co|us|gg|app|ly|tv|link|info|biz|xyz|live|social)\b/i,"a link"],[/(^|[\s(])@[A-Za-z0-9_.]{2,}/,"a social media handle"],[/(?:\d[\s().-]*){7,}/,"a phone number"]];
+const updateProblem=t=>{const x=String(t||"").trim();if(!x)return"Write something first.";for(const[re,what]of UPDATE_RULES)if(re.test(x))return"Updates can't include "+what+". Supporters can read updates but never reach you through them, so leave contact info, links and handles out.";return""};
 const PAY_LABEL={venmo:"Venmo",cashapp:"Cash App",paypalme:"PayPal",zelle:"Zelle",check:"Check or cash",manual:"Pay the team"};
 const dollars=c=>c%100?(c/100).toFixed(2):String(c/100);
 const payUrl=(o,cents)=>o.type==="venmo"?"https://venmo.com/u/"+encodeURIComponent(o.value):o.type==="cashapp"?"https://cash.app/"+o.value+"/"+dollars(cents):o.type==="paypalme"?"https://www.paypal.me/"+encodeURIComponent(o.value)+"/"+dollars(cents):"";
@@ -101,8 +105,10 @@ async function makeDemoBackend(){
     rewardName:C.reward.name,rewardText:C.reward.text,payNote:C.payNote};
   const W=D.athletes.map(a=>{const dn=displayFor(a.name);return{id:a.id,slug:slugFor(dn),name:dn,displayName:dn,weight:String(a.weight||""),photoUrl:a.photo||"",photoCutout:!!a.photo,photoConsent:!!a.photo,askText:a.ask||DEFAULT_ASK(firstName(a.name)),active:true,published:a.published!==false,raisedCents:0,daysPaid:0,sponsorCount:0}});
   const emails=Object.fromEntries(D.athletes.map(a=>[a.id,a.email||""])),names=Object.fromEntries(D.athletes.map(a=>[a.id,a.name]));
-  const PAY={links:D.payments||[]},FEE=D.feePercent||0,TERMS="2026-11-17";let orgTerms=false;
-  const claims={},orders={},messages={};let seq=1;const L=new Set();const emit=()=>L.forEach(f=>f());
+  const PAY={links:D.payments||[]},FEE=D.feePercent||0,TERMS="2026-11-21";let orgTerms=false;
+  const claims={},orders={},messages={},updates={};let seq=1;
+  const BOOT=Date.now(),demoNow=()=>Date.parse(TODAY+"T12:00:00Z")+(Date.now()-BOOT); // the sample season's clock
+  (D.updates||[]).forEach(([w,at,text,status])=>{const id="u"+(seq++);updates[id]={id,wrestlerId:w,text,status:status||"live",createdAt:Date.parse(at)}});const L=new Set();const emit=()=>L.forEach(f=>f());
   const dayMap=Object.fromEntries(season.days.map(d=>[d.key,d]));
   const price=k=>dayMap[k].priceCents||(dayMap[k].kind==="event"?season.practicePriceCents*season.eventMultiplier:season.practicePriceCents);
   const taken=c=>c&&(c.status==="paid"||(c.status==="held"&&c.holdExpires>Date.now()));
@@ -134,6 +140,12 @@ async function makeDemoBackend(){
     watchTeam(cb){const f=()=>cb(W.reduce((a,w)=>({raisedCents:a.raisedCents+w.raisedCents,daysPaid:a.daysPaid+w.daysPaid}),{raisedCents:0,daysPaid:0}));L.add(f);f();return()=>L.delete(f)},
     watchClaims(wid,cb){const f=()=>{const m={};Object.values(claims).forEach(c=>{if(c.wrestlerId===wid)m[c.dayKey]={...c}});cb(m)};L.add(f);f();return()=>L.delete(f)},
     watchMyNotes(wid,cb){const f=()=>cb(Object.values(messages).filter(m=>m.wrestlerId===wid&&m.released).sort((a,b)=>b.revealDay.localeCompare(a.revealDay)).map(m=>({...m})));L.add(f);f();return()=>L.delete(f)},
+    watchUpdates(wid,cb,all){const f=()=>{const w=W.find(x=>x.id===wid);cb(Object.values(updates).filter(u=>u.wrestlerId===wid&&(all||(u.status==="live"&&w&&w.published))).map(u=>({...u})))};L.add(f);f();return()=>L.delete(f)},
+    async postUpdate(text){await wait(300);const bad=updateProblem(text);if(bad)throw new Error(bad);const mine=Object.values(updates).filter(u=>u.wrestlerId===auth.wrestlerId);
+      if(mine.filter(u=>demoNow()-u.createdAt<864e5).length>=3)throw new Error("You can post 3 updates a day. Try again tomorrow.");
+      const id="u"+(seq++);updates[id]={id,wrestlerId:auth.wrestlerId,text:String(text).trim().slice(0,UPDATE_MAX),status:"pending",createdAt:demoNow()};emit();return{id,status:"pending"}},
+    async deleteUpdate(id){if(updates[id]&&updates[id].wrestlerId===auth.wrestlerId)delete updates[id];emit()},
+    async moderateUpdate(wid,id,approve,text){const u=updates[id];if(!u)throw new Error("Update not found.");if(approve&&text!=null){const bad=updateProblem(text);if(bad)throw new Error(bad);u.text=String(text).trim().slice(0,UPDATE_MAX)}u.status=approve?"live":"hidden";emit()},
     async paymentMode(){const to=C.team.paymentRecipient||C.team.name;return{mode:"manual",options:PAY.links,feePercent:FEE,feeOnLink:!!D.feeOnLink,disclosure:feeText(FEE,to),termsVersion:TERMS}},
     async createOrder(inp){await wait(450);if(inp.acceptTerms!==true)throw new Error("Agree to the terms to continue.");const r=place(inp,inp.method||"manual");emit();return r},
     async mockPay(id){await wait(1000);const r=pay(id,"mock",false);emit();return r},
@@ -147,7 +159,7 @@ async function makeDemoBackend(){
     async sendSignInLink(){await wait(400)}, async signInGoogle(){this.demoAs("athlete")}, async signOut(){this.demoAs("public")}, async finishEmailLink(){return false},
     async updateMyProfile(p){if(p.photoUrl&&p.photoConsent!==true)throw new Error("Confirm a parent or guardian approved posting this photo.");if(p.photoUrl==="")Object.assign(p,{photoCutout:false,photoConsent:false});Object.assign(W.find(x=>x.id===auth.wrestlerId),p);emit()},
     async uploadPhoto(wid,blob){return URL.createObjectURL(blob)},
-    watchAdmin(cb){const f=()=>cb({pending:Object.values(messages).filter(m=>m.status==="pending").map(m=>({...m})),orders:Object.values(orders).sort((a,b)=>b.createdAt-a.createdAt).map(o=>({...o})),emails:{...emails},names:{...names}});L.add(f);f();return()=>L.delete(f)},
+    watchAdmin(cb){const f=()=>cb({pending:Object.values(messages).filter(m=>m.status==="pending").map(m=>({...m})),pendingUpdates:Object.values(updates).filter(u=>u.status==="pending").map(u=>({...u})),orders:Object.values(orders).sort((a,b)=>b.createdAt-a.createdAt).map(o=>({...o})),emails:{...emails},names:{...names}});L.add(f);f();return()=>L.delete(f)},
     async setup(){toast("The sample season is already set up")},
     async saveSettings(s){const{matchName,matchCapCents,...rest}=s;Object.assign(season,rest,{match:matchName&&matchCapCents?{name:matchName,capCents:matchCapCents}:null});emit()},
     async importRoster(rows){let added=0,updated=0;const skipped=[];rows.forEach(r=>{const em=String(r.email||"").toLowerCase();if(!r.name||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){skipped.push(r.email||r.name);return}
@@ -189,6 +201,10 @@ async function makeLiveBackend(){
     watchTeam:cb=>FS.onSnapshot(FS.doc(db,"team/totals"),s=>cb(s.data()||{raisedCents:0,daysPaid:0}),snapErr),
     watchClaims:(wid,cb)=>FS.onSnapshot(FS.collection(db,"wrestlers",wid,"claims"),q=>{const m={};q.docs.forEach(d=>{const c=d.data();m[c.dayKey]={...c,holdExpires:ms(c.holdExpires)}});cb(m)},snapErr),
     watchMyNotes:(wid,cb)=>FS.onSnapshot(FS.query(FS.collection(db,"messages"),FS.where("wrestlerId","==",wid),FS.where("released","==",true),FS.orderBy("revealAt","desc"),FS.limit(120)),q=>cb(q.docs.map(d=>({id:d.id,...d.data()}))),snapErr),
+    // Public visitors get coach-approved updates only (the rules enforce it); the athlete and organizers get all of hers.
+    watchUpdates:(wid,cb,all)=>{const col=FS.collection(db,"wrestlers",wid,"updates");return FS.onSnapshot(all?col:FS.query(col,FS.where("status","==","live"),FS.limit(100)),q=>cb(q.docs.map(d=>({id:d.id,...d.data(),createdAt:ms(d.data().createdAt)||Date.now()}))),()=>cb([]))},
+    postUpdate:text=>call("athletePostUpdate",{text}), deleteUpdate:updateId=>call("athleteDeleteUpdate",{updateId}),
+    moderateUpdate:(wrestlerId,updateId,approve,text)=>call("adminModerateUpdate",{wrestlerId,updateId,approve,text}),
     async paymentMode(){try{return await call("paymentMode",{})}catch(e){return{mode:"manual",options:[],feePercent:0,feeOnLink:false,disclosure:"",termsVersion:""}}},
     createOrder:inp=>call("createOrder",inp), mockPay:orderId=>call("mockPay",{orderId}),
     onAuth(cb){AU.onAuthStateChanged(auth,async u=>{if(!u)return cb({signedIn:false,admin:false,wrestlerId:null,email:"",termsOk:false});
@@ -205,8 +221,9 @@ async function makeLiveBackend(){
     async signOut(){await AU.signOut(auth)},
     updateMyProfile:p=>call("athleteUpdateProfile",p),
     async uploadPhoto(wid,blob,type){const r=ST.ref(storage,`wrestlers/${wid}/${Date.now()}.${type==="image/png"?"png":"jpg"}`);await ST.uploadBytes(r,blob,{contentType:type});return ST.getDownloadURL(r)},
-    watchAdmin(cb){let pend=[],ords=[],emails={},names={};const push=()=>cb({pending:pend,orders:ords,emails,names});
+    watchAdmin(cb){let pend=[],pendUpd=[],ords=[],emails={},names={};const push=()=>cb({pending:pend,pendingUpdates:pendUpd,orders:ords,emails,names});
       const u=[FS.onSnapshot(FS.query(FS.collection(db,"messages"),FS.where("status","==","pending")),q=>{pend=q.docs.map(d=>({id:d.id,...d.data()}));push()},snapErr),
+        FS.onSnapshot(FS.query(FS.collectionGroup(db,"updates"),FS.where("status","==","pending")),q=>{pendUpd=q.docs.map(d=>({id:d.id,...d.data(),wrestlerId:d.data().wrestlerId||d.ref.parent.parent.id,createdAt:ms(d.data().createdAt)}));push()},snapErr),
         FS.onSnapshot(FS.query(FS.collection(db,"orders"),FS.orderBy("createdAt","desc"),FS.limit(300)),q=>{ords=q.docs.map(d=>({id:d.id,...d.data(),createdAt:ms(d.data().createdAt)}));push()},snapErr),
         FS.onSnapshot(FS.collection(db,"wrestlerPrivate"),q=>{emails={};names={};q.docs.forEach(d=>{emails[d.id]=d.data().email;names[d.id]=d.data().name});push()},snapErr)];
       return()=>u.forEach(f=>f())},
@@ -219,10 +236,10 @@ async function makeLiveBackend(){
 /* ======================================================================
    State
    ====================================================================== */
-const S={season:null,loaded:false,wrestlers:[],linked:null,linkedState:"none",team:{raisedCents:0,daysPaid:0},claims:{},notes:[],cur:null,sel:new Set(),
-  auth:{signedIn:false,admin:false,wrestlerId:null,email:"",termsOk:false},admin:{pending:[],orders:[],emails:{},names:{}},orgTab:"notes",dayTool:false,
+const S={season:null,loaded:false,wrestlers:[],linked:null,linkedState:"none",team:{raisedCents:0,daysPaid:0},claims:{},notes:[],updates:[],cur:null,sel:new Set(),
+  auth:{signedIn:false,admin:false,wrestlerId:null,email:"",termsOk:false},admin:{pending:[],pendingUpdates:[],orders:[],emails:{},names:{}},orgTab:"notes",dayTool:false,
   modal:null,pay:{mode:"manual",options:[],feePercent:0,feeOnLink:false,disclosure:"",termsVersion:""},payments:{links:[]},demoView:"public",csv:null};
-let api,unClaims=()=>{},unNotes=()=>{},unAdmin=null,unList=null,unLinked=()=>{};
+let api,unClaims=()=>{},unNotes=()=>{},unUpd=()=>{},unAdmin=null,unList=null,unLinked=()=>{};
 const TERMS_V=()=>S.pay.termsVersion||"";
 const member=()=>!!(S.auth.admin||S.auth.wrestlerId);
 const app=document.getElementById("app");
@@ -245,7 +262,10 @@ const tokenFor=w=>(w.slug?w.slug+"-":"")+w.id;
 const findWrestler=t=>{const id=idFromToken(t);return id?allW().find(w=>w.id===id):null};
 const linkFor=w=>api.mode==="live"?location.origin+"/p/"+tokenFor(w):location.origin+location.pathname+"#"+tokenFor(w);
 function watchLinked(id){unLinked();S.linkedState="loading";unLinked=api.watchWrestler(id,w=>{S.linked=w;S.linkedState=w?"ok":"hidden";if(w&&!S.cur)select(w.id);else if(!w&&S.cur===id&&!member()){S.cur=null;unClaims()}render()})}
-function select(id){if(!id||S.cur===id)return;S.cur=id;S.sel.clear();S.claims={};S.notes=[];unClaims();unNotes();
+/* Updates for the page on screen: approved ones for everyone; every status for the athlete herself and organizers. */
+function watchUpd(){unUpd();S.updates=[];if(!S.cur)return;const all=!!(S.auth.admin||S.auth.wrestlerId===S.cur);
+  unUpd=api.watchUpdates(S.cur,list=>{S.updates=list.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));render()},all)}
+function select(id){if(!id||S.cur===id)return;S.cur=id;S.sel.clear();S.claims={};S.notes=[];unClaims();unNotes();watchUpd();
   unClaims=api.watchClaims(id,m=>{S.claims=m;[...S.sel].forEach(k=>{if(claimOf(k))S.sel.delete(k)});render()});
   if(S.auth.wrestlerId===id)unNotes=api.watchMyNotes(id,n=>{S.notes=n;render()});else unNotes=()=>{};
   const w=allW().find(x=>x.id===id);
@@ -270,7 +290,7 @@ function render(){
   const main=h("div",{class:"wrap"});app.append(main);
   if(!w.published)main.append(h("p",{class:"mod",style:"margin-top:18px"},isMine()?"Your page isn't published yet. Only you and your coaches can see it. Publish it from your locker below when you and a parent are ready.":firstName(w.name)+"'s page isn't published yet. Only "+PN.obj+" and the coaches can see it."));
   if(isMine())main.append(locker(w));
-  main.append(...[member()?rosterChips():null,idea(w),rules(),calendar(w),backers(w),member()?standings():null].filter(Boolean));
+  main.append(...[member()?rosterChips():null,updatesFeed(w),idea(w),rules(),calendar(w),backers(w),member()?standings():null].filter(Boolean));
   if(S.auth.admin)main.append(orgPanel());
   app.append(footer());
   if(S.sel.size&&!S.modal)app.append(cartBar(w));
@@ -472,6 +492,28 @@ function footer(){const a=S.auth;return h("footer",{class:"wrap foot"},h("span",
   h("span",null,h("a",{href:"terms.html"},"Terms")," · ",h("a",{href:"privacy.html"},"Privacy")," · "),
   a.signedIn?h("span",null,a.email+" · ",h("button",{onclick:()=>{api.signOut();if(api.mode==="demo")S.demoView="public"}},"Sign out")):h("button",{onclick:()=>{S.modal={type:"signin",stage:"email",email:""};render()}},A.One+" or coach sign-in"))}
 
+/* ---------- one-way updates ----------
+   The athlete posts, a coach approves, supporters read. There is deliberately no reply, comment or reaction. */
+const updDate=ms=>new Date(ms||Date.now()).toLocaleDateString("en-US",{timeZone:C.timezone||"America/Chicago",weekday:"short",month:"short",day:"numeric"});
+const UPD_STATUS={pending:["pending","Waiting for coach"],live:["paid","On your page"],hidden:["void","Not posted"]};
+function updatesFeed(w){const live=S.updates.filter(u=>u.status==="live");if(!live.length)return null;const first=firstName(w.name);
+  return h("section",{class:"panel",id:"updates"},h("div",{class:"sechead"},h("h2",null,"From "+first),
+      h("p",null,"Updates "+first+" posts during the season. A coach reads each one first. This is one-way: there's no way to reply here. To send "+PN.obj+" something, sponsor a day and write a note.")),
+    h("div",{class:"updates"},live.slice(0,30).map(u=>h("article",{class:"update"},h("div",{class:"eyebrow"},updDate(u.createdAt)),h("p",null,u.text),
+      S.auth.admin?h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.moderateUpdate(w.id,u.id,false).then(()=>toast("Taken down")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to take down"}}},"Take down")):null))))}
+function updateComposer(w){const err=h("p",{class:"err",role:"alert"});const cnt=h("div",{class:"counter num"},"0/"+UPDATE_MAX);
+  const ta=h("textarea",{class:"inp",id:"my-update",maxlength:String(UPDATE_MAX),placeholder:"How's the season going? A win, a goal you hit, a thank-you…",style:"min-height:110px",oninput:e=>{cnt.textContent=e.target.value.length+"/"+UPDATE_MAX;err.textContent=""}});
+  const mine=S.updates;
+  return h("div",{class:"card"},h("h3",null,"Post an update"),
+    h("p",null,"Tell the people backing you how it's going. Your coach reads it first, then it shows on your page for anyone with your link."+(w.published?"":" It shows once your page is published.")),
+    h("p",{class:"mod"},"It's one-way: people can read it but can't reply or message you through it. Leave out where you'll be and when, your phone, email, social handles, and links."),
+    ta,cnt,err,
+    h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn blu",onclick:async e=>{const bad=updateProblem(ta.value);if(bad){err.textContent=bad;return}
+      e.target.disabled=true;try{await api.postUpdate(ta.value);ta.value="";toast("Sent to your coach. It goes up once they approve it.")}catch(er){err.textContent=errText(er);e.target.disabled=false}}},"Send to my coach")),
+    mine.length?h("div",{style:"display:grid;gap:8px"},h("h3",{style:"margin-top:6px"},"Your updates"),mine.slice(0,20).map(u=>{const[cls,label]=UPD_STATUS[u.status]||UPD_STATUS.pending;
+      return h("div",{class:"q"},h("div",{class:"meta"},h("span",{class:"st-pill "+cls},label),h("span",null,updDate(u.createdAt))),h("p",{style:"margin:0;white-space:pre-line"},u.text),
+        h("div",{class:"btns"},h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.deleteUpdate(u.id).then(()=>toast("Deleted")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to delete"}}},"Delete")))})):null)}
+
 /* ---------- the athlete's locker ---------- */
 function locker(w){const today=api.today(),first=firstName(w.name);const todays=S.notes.filter(n=>n.revealDay===today);
   const sealed=days().filter(d=>{const c=S.claims[d.key];return c&&c.status==="paid"&&c.hasNote&&d.key>today});
@@ -485,6 +527,7 @@ function locker(w){const today=api.today(),first=firstName(w.name);const todays=
     h("p",null,"Notes open at "+revealTime()+" on their day and stay here all season."))));
   if(sealed.length)box.append(h("div",null,h("h3",null,sealed.length+" sealed"),h("div",{class:"sealed"},sealed.slice(0,30).map(d=>h("span",null,frag(SMALL_ENV),short(d.key))))));
   if(opened.length)box.append(h("div",null,h("h3",null,"Opened notes"),h("div",{class:"notes"},opened.map((n,i)=>h("article",{class:"notecard",style:`--r:${[-1.2,.9,-.5,1.3][i%4]}deg`},h("p",null,n.text),h("footer",null,h("b",null,n.fromName),h("span",null,short(n.revealDay))))))));
+  box.append(updateComposer(w));
   // edit message + photo
   const ta=h("textarea",{class:"inp",id:"my-ask",maxlength:"900",style:"min-height:220px"});ta.value=w.askText||DEFAULT_ASK(first);
   const file=h("input",{type:"file",accept:"image/*",id:"my-photo",class:"sr",onchange:e=>uploadFor(w,e.target.files[0],p=>api.updateMyProfile(p))});
@@ -507,6 +550,7 @@ function publishCard(w){const ok=h("input",{type:"checkbox",id:"pub-ok"});const 
   return h("div",{class:"card",style:"border-color:var(--accent)"},h("h3",null,"Publish your page"),
     h("p",null,"Your page shows your first name and last initial"+(C.athletes.nameDisplay==="full"?" (your coach set it to show your full name)":"")+", your "+(A.detail.label||"details").toLowerCase()+", your message, the days people sponsor, and a photo only if you add one."),
     h("p",null,"It isn't listed anywhere. Only people you send your link to can open it, and they can pass it along. You can unpublish any time."),
+    h("p",null,"You'll also be able to post short updates for your supporters. A coach approves each one, and nobody can reply or contact you through them."),
     h("label",{class:"check"},ok,h("span",null,"A parent or guardian has read the ",h("a",{href:"terms.html",target:"_blank",rel:"noopener"},"terms")," and approves this page")),err,
     h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn pri",onclick:async e=>{if(!ok.checked){err.textContent="Check the box once a parent or guardian approves.";return}
       e.target.disabled=true;try{await api.publish(true);toast("Published. Now send your link.")}catch(er){err.textContent=errText(er);e.target.disabled=false}}},"Publish my page")))}
@@ -617,6 +661,7 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
   else{const backer=m.paid.units>=5;
     box.append(h("div",{class:"done"},h("img",{src:C.team.logo,alt:""}),h("h3",{id:"sheet-h"},"Your strength is on its way"),h("p",{class:"idea-line",style:"margin:0"},line("thanks")),
       h("p",{style:"margin:0;color:var(--muted)"},money(m.paid.total)+(m.paid.pending?" for the team, once your payment arrives. ":" for the team. ")+(m.form.message?"Your note is sealed. "+PN.Sub+"'ll open it the morning of "+longDay(m.form.revealDay)+".":"Thank you for backing "+C.team.name+".")),
+      h("p",{style:"margin:0;color:var(--muted)"},"Keep "+first+"'s link: "+PN.sub+" may post updates on this page through the season."),
       backer?h("span",{class:"badge"},"You're a "+S.season.rewardName):null),h("div",{class:"btns"},h("button",{class:"btn pri",onclick:close},"Done")))}
 }
 
@@ -626,7 +671,8 @@ function orgPanel(){const wrap=h("section",{class:"org",id:"organizer"});
   if(!S.auth.termsOk){wrap.append(orgTerms());return wrap}
   if(!S.season){wrap.append(h("div",{class:"btns",style:"justify-content:flex-start;margin-top:14px"},h("button",{class:"btn pri",onclick:()=>api.setup().then(()=>toast("Season set up")).catch(e=>toast(errText(e)))},"Set up season")));return wrap}
   const pend=S.admin.pending,ords=S.admin.orders,open=ords.filter(o=>o.status==="pending"||o.status==="conflict");
-  const T=[["notes","Notes to read ("+pend.length+")"],["money","Money ("+open.length+" open)"],["roster","Roster & logins"],["settings","Settings"]];
+  const pu=S.admin.pendingUpdates||[];
+  const T=[["notes","Notes to read ("+pend.length+")"],["updates","Updates ("+pu.length+")"],["money","Money ("+open.length+" open)"],["roster","Roster & logins"],["settings","Settings"]];
   wrap.append(h("div",{class:"tabs",role:"tablist"},T.map(([k,l])=>h("button",{role:"tab","aria-selected":String(S.orgTab===k),onclick:()=>{S.orgTab=k;render()}},l))));
   const wn=id=>S.admin.names[id]||(allW().find(w=>w.id===id)||{}).name||id;
   if(S.orgTab==="notes"){
@@ -636,6 +682,13 @@ function orgPanel(){const wrap=h("section",{class:"org",id:"organizer"});
       wrap.append(h("div",{class:"q"},h("div",{class:"meta"},h("b",null,"For "+wn(n.wrestlerId)),h("span",null,"from "+n.fromName),h("span",null,"opens "+F(n.revealDay,{weekday:"short",month:"short",day:"numeric"}))),ta,
         h("div",{class:"btns"},h("button",{class:"btn mini",onclick:()=>api.moderate(n.id,false).then(()=>toast("Hidden. "+PN.Sub+" won't see it.")).catch(e=>toast(errText(e)))},"Don't show "+PN.obj),
           h("button",{class:"btn blu mini",onclick:()=>api.moderate(n.id,true,ta.value).then(()=>toast("Approved")).catch(e=>toast(errText(e)))},"Approve"))))})}
+  else if(S.orgTab==="updates"){
+    wrap.append(h("p",{style:"color:var(--muted);margin:14px 0 0"},"Updates "+A.many+" want to post on their pages. Nothing shows until you approve it. Fix or decline anything that says where "+PN.sub+"'ll be and when, shares personal details, or shouldn't be public. You can take down a posted update from "+PN.pos+" page any time."));
+    if(!pu.length)wrap.append(h("p",{class:"empty",style:"margin-top:12px"},"All caught up."));
+    pu.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)).forEach(u=>{const ta=h("textarea",{class:"inp",id:"modu-"+u.id,maxlength:String(UPDATE_MAX)});ta.value=u.text;
+      wrap.append(h("div",{class:"q"},h("div",{class:"meta"},h("b",null,"From "+wn(u.wrestlerId)),h("span",null,updDate(u.createdAt))),ta,
+        h("div",{class:"btns"},h("button",{class:"btn mini",onclick:()=>api.moderateUpdate(u.wrestlerId,u.id,false).then(()=>toast("Not posted")).catch(e=>toast(errText(e)))},"Don't post"),
+          h("button",{class:"btn blu mini",onclick:()=>api.moderateUpdate(u.wrestlerId,u.id,true,ta.value).then(()=>toast("Posted to "+PN.pos+" page")).catch(e=>toast(errText(e)))},"Approve"))))})}
   else if(S.orgTab==="money"){
     const via=o=>(o.payment&&o.payment.provider)||o.method;const APPS=["venmo","cashapp","paypalme","zelle","manual"];
     const rows=roster().map(w=>{const os=ords.filter(o=>o.wrestlerId===w.id&&o.status==="paid");const by=f=>os.filter(o=>f(via(o))).reduce((s,o)=>s+o.amountCents,0);
@@ -770,6 +823,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&S.modal&&!(S.modal.
     if(!a.admin&&unAdmin){unAdmin();unAdmin=null;S.dayTool=false}
     if(a.wrestlerId&&a.wrestlerId!==was){S.cur=null;select(a.wrestlerId)}
     if(!a.wrestlerId&&was){unNotes();S.notes=[]}
+    if(S.cur)watchUpd();
     if(a.signedIn&&!a.admin&&!a.wrestlerId)toast("Signed in, but "+a.email+" isn't on the roster or organizer list. Ask your coach.");
     render()});
   try{await api.finishEmailLink(()=>new Promise(r=>{S.modal={type:"signin",stage:"confirm",resolve:r};render()}))}catch(e){toast(errText(e))}

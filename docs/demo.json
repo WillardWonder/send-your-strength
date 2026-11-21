@@ -247,5 +247,25 @@
       "value": "Payable to the booster club, give to Coach"
     }
   ],
-  "feePercent": 0
+  "feePercent": 0,
+  "updates": [
+    [
+      "d3",
+      "2026-12-12T20:00:00-06:00",
+      "Went 3-1 at the Lakeland Invite today. Lost my first match, then won three straight. Thank you to everyone who sponsored a day. I read every note before practice and it helps more than you know.",
+      "live"
+    ],
+    [
+      "d3",
+      "2026-12-05T18:00:00-06:00",
+      "First week of practice done. Sore everywhere, but I made weight and I'm ready for Saturday.",
+      "live"
+    ],
+    [
+      "d3",
+      "2026-12-14T07:00:00-06:00",
+      "Big dual Thursday. Going to wrestle hard for all of you!",
+      "pending"
+    ]
+  ]
 }

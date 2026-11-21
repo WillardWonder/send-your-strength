@@ -339,6 +339,48 @@ const ATTEST = ["terms"];
     assert.strictEqual(get("config/season").days.length, DAYS.length, "back to the original schedule");
   });
 
+  /* ---- one-way athlete updates ---- */
+  const updates = (w) => [...store.keys()].filter((k) => k.startsWith(`wrestlers/${w}/updates/`)).map((k) => ({ id: k.split("/").pop(), ...get(k) }));
+  await t("updates: only the athlete posts to her own page; each waits for a coach and starts hidden", async () => {
+    await expectErr(fn.athletePostUpdate({ auth: { uid: "s", token: {} }, data: { text: "hi" } }), "permission-denied");
+    await expectErr(fn.athletePostUpdate({ ...me(kenzie), data: { text: "   " } }), "invalid-argument");
+    const r = await fn.athletePostUpdate({ ...me(kenzie), data: { text: "Won my first match at the Lakeland Invite! Thank you all.", wrestlerId: "someoneElse", status: "live" } });
+    assert.strictEqual(r.status, "pending");
+    const u = get(`wrestlers/${kenzie}/updates/${r.id}`);
+    assert.deepStrictEqual([u.status, u.wrestlerId], ["pending", kenzie], "a caller can't pick the page or skip approval");
+  });
+  await t("updates: contact details, links and handles are refused so supporters can't reach the athlete through one", async () => {
+    for (const bad of ["text me 715-555-0123", "email kenzie@gmail.com", "follow @kenzie.wrestles", "see www.example.com", "my site kenzie.com", "http://x.y", "call (715) 555 0123"]) {
+      await expectErr(fn.athletePostUpdate({ ...me(kenzie), data: { text: bad } }), "invalid-argument");
+    }
+    const ok = await fn.athletePostUpdate({ ...me(kenzie), data: { text: "Went 3-1 at 126 on Saturday, 2026-27 is going to be a good year." } });
+    assert.strictEqual(get(`wrestlers/${kenzie}/updates/${ok.id}`).status, "pending", "scores, weights and years still post");
+  });
+  await t("updates: capped at 3 a day per athlete; capped text length", async () => {
+    await fn.athletePostUpdate({ ...me(kenzie), data: { text: "x".repeat(900) } });
+    assert.ok(updates(kenzie).every((u) => u.text.length <= 500));
+    await expectErr(fn.athletePostUpdate({ ...me(kenzie), data: { text: "one too many" } }), "resource-exhausted");
+  });
+  await t("updates: organizers approve (fixing typos, same contact check), hide, or take down; non-organizers can't", async () => {
+    const [a, b] = updates(kenzie);
+    await expectErr(fn.adminModerateUpdate({ ...me(kenzie), data: { wrestlerId: kenzie, updateId: a.id, approve: true } }), "permission-denied");
+    await expectErr(fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: a.id, approve: true, text: "dm @me" } }), "invalid-argument");
+    await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: a.id, approve: true, text: "Won my first match! Thank you all." } });
+    assert.deepStrictEqual([get(`wrestlers/${kenzie}/updates/${a.id}`).status, get(`wrestlers/${kenzie}/updates/${a.id}`).text], ["live", "Won my first match! Thank you all."]);
+    await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: b.id, approve: false } });
+    assert.strictEqual(get(`wrestlers/${kenzie}/updates/${b.id}`).status, "hidden");
+    await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: a.id, approve: false } });
+    assert.strictEqual(get(`wrestlers/${kenzie}/updates/${a.id}`).status, "hidden", "a live update can be taken down");
+    await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: a.id, approve: true } });
+  });
+  await t("updates: the athlete can delete her own, and only her own", async () => {
+    const [, b] = updates(kenzie);
+    await fn.athleteDeleteUpdate({ ...me("otherAthlete"), data: { updateId: b.id } });
+    assert.ok(get(`wrestlers/${kenzie}/updates/${b.id}`), "another athlete's call touches only her own page");
+    await fn.athleteDeleteUpdate({ ...me(kenzie), data: { updateId: b.id } });
+    assert.strictEqual(get(`wrestlers/${kenzie}/updates/${b.id}`), undefined);
+  });
+
   /* ---- retention ---- */
   await t("retention: nothing is deleted before 90 days after the last day; after that, athlete and sponsor data is gone", async () => {
     const realNow = Date.now, last = Date.parse(TEAM.schedule.lastDay + "T00:00:00Z");

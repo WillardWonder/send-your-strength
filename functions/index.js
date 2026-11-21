@@ -20,6 +20,7 @@
  *   - A page stays hidden until the athlete (with a parent) accepts the athlete terms and publishes it.
  *     Organizers can unpublish, never publish.
  *   - Photos are optional and need a parent-approval confirmation.
+ *   - Athletes can post short one-way text updates. A coach approves each one; there's no way to reply.
  *   - Organizers must accept the organizer terms (one checkbox: compliance, responsibility, release) before any organizer tool works.
  *
  * Money flow (the site never holds money)
@@ -51,13 +52,16 @@ const PLATFORM_FEE_PERCENT = defineString("PLATFORM_FEE_PERCENT", { default: "0"
 const FEE_ON_LINK_PAYMENTS = defineString("FEE_ON_LINK_PAYMENTS", { default: "no" });
 
 // Bump this whenever docs/terms.html or docs/privacy.html changes in substance: everyone re-accepts.
-const TERMS_VERSION = "2026-11-17";
+const TERMS_VERSION = "2026-11-21";
 const ORG_ATTESTATIONS = ["terms"];
 
 const holdMinutes = () => (PAYMENT_MODE.value() === "mock" ? 15 : 72 * 60);
 const MAX_DAYS_PER_ORDER = 40;
 const MAX_MESSAGE = 280;
 const MAX_ASK = 900;
+const MAX_UPDATE = 500;
+const UPDATES_PER_DAY = 3;
+const UPDATES_PENDING_MAX = 5;
 const OPTS = { cors: true, maxInstances: 10 };
 
 /* ---------------- helpers ---------------- */
@@ -351,6 +355,65 @@ exports.athleteUnpublish = onCall(OPTS, async (req) => {
   const id = requireAthlete(req);
   await db.doc(`wrestlers/${id}`).set({ published: false }, { merge: true });
   return { ok: true };
+});
+
+/* ---------------- athlete updates (one-way) ----------------
+   An athlete can post a short text update to her page. It's one-way by design:
+   - supporters can read it, but there is no reply, comment, reaction or contact path of any kind;
+   - a coach approves every update before anyone else sees it, and can take one down any time;
+   - text only (no photos, so no location data in image files), plain text when shown;
+   - contact details, links and social handles are refused, so an update can't open a side channel;
+   - it shows only while her page is published, and it's deleted with everything else at retention. */
+const updateRef = (wrestlerId, updateId) => db.doc(`wrestlers/${wrestlerId}/updates/${updateId}`);
+const CONTACT_RULES = [
+  [/[^\s@]+@[^\s@]+\.[^\s@]+/, "an email address"],
+  [/\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(com|net|org|edu|io|me|co|us|gg|app|ly|tv|link|info|biz|xyz|live|social)\b/i, "a link"],
+  [/(^|[\s(])@[A-Za-z0-9_.]{2,}/, "a social media handle"],
+  [/(?:\d[\s().-]*){7,}/, "a phone number"],
+];
+function updateText(raw) {
+  const text = cleanText(raw, MAX_UPDATE);
+  if (!text) throw new HttpsError("invalid-argument", "Write something first.");
+  for (const [re, what] of CONTACT_RULES) {
+    if (re.test(text)) throw new HttpsError("invalid-argument", `Updates can't include ${what}. Supporters can read updates but never reach you through them, so leave contact info, links and handles out.`);
+  }
+  return text;
+}
+
+exports.athletePostUpdate = onCall(OPTS, async (req) => {
+  const id = requireAthlete(req);
+  const text = updateText(req.data && req.data.text);
+  const mine = await db.collection(`wrestlers/${id}/updates`).get();
+  const now = Date.now();
+  const recent = mine.docs.filter((d) => { const c = d.data().createdAt; return c && c.toMillis && now - c.toMillis() < 864e5; }).length;
+  if (recent >= UPDATES_PER_DAY) throw new HttpsError("resource-exhausted", `You can post ${UPDATES_PER_DAY} updates a day. Try again tomorrow.`);
+  if (mine.docs.filter((d) => d.data().status === "pending").length >= UPDATES_PENDING_MAX) {
+    throw new HttpsError("resource-exhausted", "Your coach has a few of your updates to read already. Wait until they're approved.");
+  }
+  const ref = db.collection(`wrestlers/${id}/updates`).doc();
+  await ref.set({ wrestlerId: id, text, status: "pending", createdAt: FieldValue.serverTimestamp() });
+  return { id: ref.id, status: "pending" };
+});
+
+exports.athleteDeleteUpdate = onCall(OPTS, async (req) => {
+  const id = requireAthlete(req);
+  const ref = updateRef(id, cleanId(req.data && req.data.updateId));
+  if ((await ref.get()).exists) await ref.delete();
+  return { ok: true };
+});
+
+/* approve: true posts it (live), false keeps it off the page. A coach may fix a typo first; the same contact check applies. */
+exports.adminModerateUpdate = onCall(OPTS, async (req) => {
+  await requireOrganizer(req);
+  const d = req.data || {};
+  const ref = updateRef(cleanId(d.wrestlerId), cleanId(d.updateId));
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Update not found.");
+  const approve = d.approve === true;
+  const patch = { status: approve ? "live" : "hidden", moderatedBy: who(req), moderatedAt: FieldValue.serverTimestamp() };
+  if (approve && d.text != null) patch.text = updateText(d.text);
+  await ref.update(patch);
+  return { ok: true, status: patch.status };
 });
 
 /* ---------------- organizers ---------------- */
@@ -659,7 +722,7 @@ async function purgeIfExpired(nowMs) {
   let n = 0;
   const wipe = async (q) => { const r = await q.get(); for (const d of r.docs) { await d.ref.delete(); n++; } };
   const ws = await db.collection("wrestlers").get();
-  for (const w of ws.docs) { await wipe(db.collection(`wrestlers/${w.id}/claims`)); await w.ref.delete(); n++; }
+  for (const w of ws.docs) { await wipe(db.collection(`wrestlers/${w.id}/claims`)); await wipe(db.collection(`wrestlers/${w.id}/updates`)); await w.ref.delete(); n++; }
   for (const c of ["wrestlerPrivate", "rosterEmails", "orders", "messages"]) await wipe(db.collection(c));
   await db.doc("config/season").set({ purgedAt: FieldValue.serverTimestamp() }, { merge: true });
   return { purged: true, deleted: n };
