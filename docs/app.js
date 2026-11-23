@@ -294,7 +294,7 @@ function render(){
   const main=h("div",{class:"wrap"});app.append(main);
   if(!w.published)main.append(h("p",{class:"mod",style:"margin-top:18px"},isMine()?"Your page isn't published yet. Only you and your coaches can see it. Publish it from your locker below when you and a parent are ready.":firstName(w.name)+"'s page isn't published yet. Only "+PN.obj+" and the coaches can see it."));
   if(isMine())main.append(locker(w));
-  main.append(...[member()?rosterChips():null,updatesFeed(w),idea(w),rules(),calendar(w),backers(w),member()?standings():null].filter(Boolean));
+  main.append(...[member()?rosterChips():null,updatesFeed(w),idea(w),rules(),calendar(w),backers(w),member()?standings():null,supporterFaq(w)].filter(Boolean));
   if(S.auth.admin)main.append(orgPanel());
   app.append(footer());
   if(S.sel.size&&!S.modal)app.append(cartBar(w));
@@ -321,6 +321,7 @@ function topBar(){const a=S.auth;return h("header",{class:"top"},h("div",{class:
   h("div",{class:"brand"},h("b",null,C.brand.name),h("span",null,C.team.name)),
   h("nav",{"aria-label":"Sections"},
     curW()?h("a",{href:"#calendar",class:"hide-sm",onclick:jump("calendar")},"Calendar"):null,member()&&curW()?h("a",{href:"#standings",class:"hide-sm",onclick:jump("standings")},"Standings"):null,
+    curW()?h("a",{href:"#questions",class:"hide-sm",onclick:jump("questions")},"Questions"):null,
     a.wrestlerId?h("button",{class:"me",onclick:()=>{select(a.wrestlerId);setTimeout(()=>document.getElementById("locker")?.scrollIntoView({behavior:"smooth"}),40)}},"My page"):null,
     a.admin?h("button",{class:"me",onclick:()=>document.getElementById("organizer")?.scrollIntoView({behavior:"smooth"})},"Organizer"):null,
     !a.signedIn?h("button",{onclick:()=>{S.modal={type:"signin",stage:"email",email:""};render()}},"Sign in"):null)))}
@@ -493,7 +494,24 @@ function idea(w){const first=firstName(w.name);const n=days().filter(d=>!isOff(d
       h("li",null,h("b",null,"Pick a day"),h("span",null,"A "+L.practice.toLowerCase()+", a "+L.event.toLowerCase()+", or a "+L.postseason.toLowerCase()+" day. You're backing "+PN.pos+" journey, not a result: if "+PN.sub+" "+vb("doesn't","don't")+" qualify or "+vb("doesn't","don't")+" compete that day, your day still counts.")),
       h("li",null,h("b",null,"Send a message"),h("span",null,"It stays sealed until "+revealTime()+" on your day, after a coach reads it. "+line("note")+" "+PN.Sub+" "+vb("keeps","keep")+" every note all season.")),
       h("li",null,h("b",null,"Help build the athlete"),h("span",null,S.season.payNote+" Your day turns blue on "+PN.pos+" calendar as soon as the payment goes through.",
-        S.pay.disclosure?h("span",{id:"fee-disclosure-how",style:"display:block;margin-top:6px"},S.pay.disclosure):null))))}
+        S.pay.disclosure?h("span",{id:"fee-disclosure-how",style:"display:block;margin-top:6px"},S.pay.disclosure):null)),
+      h("li",null,h("b",null,"Follow along"),h("span",null,first+" "+vb("posts","post")+" updates in "+PN.pos+" corner on this page through the season. Bookmark the page to check back"+(S.pay.emailUpdates?", or leave your email at checkout and we'll send you a link whenever "+PN.sub+" "+vb("posts","post")+" (once a day at most).":".")))))}
+
+/* Plain answers for supporters: what happens after they sponsor, how to follow along, and why there's no way to message the athlete. */
+function supporterFaq(w){const first=firstName(w.name),L=C.labels,email=!!S.pay.emailUpdates;
+  const qa=[
+    ["What happens after I sponsor a day?","Your day turns blue on "+PN.pos+" calendar as soon as the payment reaches the team. Payments by app, check or cash show up once a coach confirms they arrived. Your note stays sealed until "+revealTime()+" on your day, and a coach reads it first."],
+    ["How do I see how "+PN.sub+"'s doing?","Come back to this page. "+first+"'s corner, near the top, has every update "+PN.sub+" "+vb("posts","post")+" this season, newest first. This page isn't listed or searchable, so bookmark it or keep the message "+first+" sent you with the link."+(email?" If you left your email at checkout and kept the box checked, we'll also email you a link whenever "+PN.sub+" "+vb("posts","post")+", once a day at most.":"")],
+    email?["I didn't check the email box. Can I still get updates?","Yes. Sponsor any day with your email and leave the box checked. Or just bookmark this page and check back; the updates are always here."]:null,
+    email?["How do I stop the emails?","Tap “Stop update emails” at the bottom of any of them. It takes effect right away and doesn't affect your sponsorship or your note."]:null,
+    ["Can I message "+PN.obj+" or reply to an update?","No, and that's on purpose. Because these "+A.many+" are students, updates are one-way: there are no comments or replies, and replying to one of our emails doesn't reach "+PN.obj+". The one way to reach "+PN.obj+" here is the note you write when you sponsor a day, and a coach reads it first."],
+    ["What if "+PN.sub+" "+vb("doesn't","don't")+" compete on my day?","Your day still counts. You're backing "+PN.pos+" season, not a result: the note still opens that morning, and the money still goes to the team."],
+    ["Where does my money go?",S.season.payNote+(S.pay.disclosure?" "+S.pay.disclosure:"")+" This site never handles your money; you pay the team directly."],
+    ["Who sees my name and contact info?","Your name, or “Anonymous” if you choose it, shows on "+PN.pos+" calendar. Your email or phone is seen only by the team's organizers"+(email?" and is used for update emails only if you ask for them":"")+". It's deleted after the season. Details are in the Privacy Policy."],
+  ].filter(Boolean);
+  return h("section",{class:"panel faq",id:"questions"},h("div",{class:"sechead"},h("h2",null,"Questions"),h("p",null,"How it works for the people backing "+first+".")),
+    h("div",{class:"faq-list"},qa.map(([q,a])=>h("details",null,h("summary",null,q),h("p",null,a)))),
+    h("p",{style:"color:var(--muted);font-size:14px;margin:12px 0 0"},"Read the full ",h("a",{href:"terms.html"},"Terms")," and ",h("a",{href:"privacy.html"},"Privacy Policy"),"."))}
 
 function footer(){const a=S.auth;return h("footer",{class:"wrap foot"},h("span",null,C.team.school+" "+C.team.name+" · "+C.team.season+" · Schedule from "+C.team.scheduleSource+". "),
   h("span",null,h("a",{href:"terms.html"},"Terms")," · ",h("a",{href:"privacy.html"},"Privacy")," · "),
@@ -504,7 +522,10 @@ const approvedMsg=r=>r&&r.emailed?"Posted. "+r.emailed+(r.emailed===1?" supporte
    The athlete posts, a coach approves, supporters read. There is deliberately no reply, comment or reaction. */
 const updDate=ms=>new Date(ms||Date.now()).toLocaleDateString("en-US",{timeZone:C.timezone||"America/Chicago",weekday:"short",month:"short",day:"numeric"});
 const UPD_STATUS={pending:["pending","Waiting for coach"],live:["paid","On your page"],hidden:["void","Not posted"]};
-function updatesFeed(w){const live=S.updates.filter(u=>u.status==="live");if(!live.length)return null;const first=firstName(w.name);
+function updatesFeed(w){const live=S.updates.filter(u=>u.status==="live");const first=firstName(w.name);
+  if(!live.length)return w.published?h("section",{class:"corner none",id:"updates","aria-labelledby":"corner-h"},
+    h("div",null,h("div",{class:"eyebrow"},"Check back here"),h("h2",{id:"corner-h"},first+"'s corner")),
+    h("p",null,"No updates yet. "+first+" will post here through the season to let everyone backing "+PN.obj+" know how it's going. Bookmark this page"+(S.pay.emailUpdates?", or leave your email when you sponsor a day and we'll send you a link when "+PN.sub+" "+vb("posts","post")+".":" and check back."))):null;
   const[top,...rest]=live;const fresh=Date.now()-(top.createdAt||0)<4*864e5;
   const takeDown=u=>S.auth.admin?h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.moderateUpdate(w.id,u.id,false).then(()=>toast("Taken down")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to take down"}}},"Take down"):null;
   return h("section",{class:"corner"+(S.flashUntil>Date.now()?" flash":""),id:"updates","aria-labelledby":"corner-h"},
@@ -518,7 +539,7 @@ function updateComposer(w){const err=h("p",{class:"err",role:"alert"});const cnt
   const ta=h("textarea",{class:"inp",id:"my-update",maxlength:String(UPDATE_MAX),placeholder:"How's the season going? A win, a goal you hit, a thank-you…",style:"min-height:110px",oninput:e=>{cnt.textContent=e.target.value.length+"/"+UPDATE_MAX;err.textContent=""}});
   const mine=S.updates;
   return h("div",{class:"card"},h("h3",null,"Post an update"),
-    h("p",null,"Tell the people backing you how it's going. Your coach reads it first, then it shows in "+(firstName(w.name))+"'s corner on your page for anyone with your link."+(w.published?"":" It shows once your page is published.")),
+    h("p",null,"Tell the people backing you how it's going. Your coach reads it first, then it shows in the “"+firstName(w.name)+"'s corner” section of your page for anyone with your link."+(w.published?"":" It shows once your page is published.")),
     S.pay.emailUpdates&&w.followerCount?h("p",{style:"margin:0"},h("b",null,w.followerCount+(w.followerCount===1?" supporter gets":" supporters get"))," an email with a link to your page when your coach approves it (one email a day at most). The email doesn't include what you wrote."):null,
     h("p",{class:"mod"},"It's one-way: people can read it but can't reply or message you through it. Leave out where you'll be and when, your phone, email, social handles, and links."),
     ta,cnt,err,
@@ -678,7 +699,7 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
   else{const backer=m.paid.units>=5;
     box.append(h("div",{class:"done"},h("img",{src:C.team.logo,alt:""}),h("h3",{id:"sheet-h"},"Your strength is on its way"),h("p",{class:"idea-line",style:"margin:0"},line("thanks")),
       h("p",{style:"margin:0;color:var(--muted)"},money(m.paid.total)+(m.paid.pending?" for the team, once your payment arrives. ":" for the team. ")+(m.form.message?"Your note is sealed. "+PN.Sub+"'ll open it the morning of "+longDay(m.form.revealDay)+".":"Thank you for backing "+C.team.name+".")),
-      h("p",{style:"margin:0;color:var(--muted)"},m.form.notify!==false&&S.pay.emailUpdates&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(m.form.contact||"").trim())?"You're in "+PN.pos+" corner now. When "+first+" posts an update, we'll email you a link"+(m.paid.pending?" (once your payment is confirmed).":"."):"Keep "+first+"'s link: "+PN.sub+" may post updates in "+PN.pos+" corner on this page through the season."),
+      h("p",{style:"margin:0;color:var(--muted)"},m.form.notify!==false&&S.pay.emailUpdates&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(m.form.contact||"").trim())?"You're in "+PN.pos+" corner now. When "+first+" "+vb("posts","post")+" an update, we'll email you a link to it"+(m.paid.pending?", starting once your payment is confirmed.":".")+" You can also bookmark this page and check "+first+"'s corner any time.":"Bookmark this page: "+first+" "+vb("posts","post")+" updates in "+first+"'s corner here through the season."),
       backer?h("span",{class:"badge"},"You're a "+S.season.rewardName):null),h("div",{class:"btns"},h("button",{class:"btn pri",onclick:close},"Done")))}
 }
 

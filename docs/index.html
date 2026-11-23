@@ -452,6 +452,15 @@ th{font:800 13px var(--display);letter-spacing:.1em;text-transform:uppercase;col
 .corner.flash{animation:cornerflash 2.2s ease-out 1}
 @keyframes cornerflash{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--accent) 70%,transparent)}60%{box-shadow:0 0 0 14px transparent}100%{box-shadow:none}}
 @media (prefers-reduced-motion:reduce){.corner.flash{animation:none}}
+.corner.none{gap:8px;padding:18px 20px}
+.corner.none h2{font-size:clamp(28px,4.5vw,38px);text-transform:uppercase;font-weight:900;margin:0;line-height:1}
+.corner.none p{margin:0;color:var(--muted);max-width:62ch}
+/* supporter questions */
+.faq-list{display:grid;gap:8px;max-width:820px}
+.faq details{background:var(--night);border:1px solid var(--line);border-radius:12px;padding:0 16px}
+.faq summary{cursor:pointer;padding:14px 0;font-weight:700;font-size:16.5px;list-style-position:outside}
+.faq details[open] summary{padding-bottom:6px}
+.faq details p{margin:0 0 14px;color:var(--muted);line-height:1.6}
 </style>
 
 <div id="app"></div>

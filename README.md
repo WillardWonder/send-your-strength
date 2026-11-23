@@ -2,7 +2,7 @@
 
 **Pick a day. Send a message. Help build the athlete.**
 
-A sponsor-a-day fundraiser any team can run. Each athlete gets their own page and their own link. Supporters sponsor a practice ($5 by default), a game or meet, or a postseason day, and leave a note. The athlete opens that note the morning of the sponsored day. Coaches approve every note, track every dollar, and manage the roster.
+A sponsor-a-day fundraiser any team can run. Each athlete gets their own page and their own link. Supporters sponsor a practice ($5 by default), a game or meet, or a postseason day, and leave a note. The athlete opens that note the morning of the sponsored day, and supporters follow along through the updates she posts in her corner of the page (with an optional email when she posts). Coaches approve every note and every update, track every dollar, and manage the roster.
 
 > Your words can carry them through the hard days. · Support the season. Strengthen the athlete. · One message. One moment. One stronger athlete. · Be part of the work behind the wins.
 
@@ -88,12 +88,13 @@ The site never holds or moves money. Sponsors pay the team directly.
 - **Display names.** Public pages show first name and last initial (set `athletes.nameDisplay` to `"full"` in `team.json` for full names). Full names and emails are organizer-only.
 - **Publishing.** Every page starts hidden. The athlete publishes it from her locker after a parent or guardian approves the terms. Organizers can take a page down but can't publish one.
 - **Photos** are optional and need a parent's approval. Without one, the page shows the athlete's initial.
-- **Updates (one-way).** From her locker, an athlete can post a short text update (500 characters) that shows on her page under "From <name>". It's one-way on purpose:
+- **Updates (one-way).** From her locker, an athlete can post a short text update (500 characters) that shows in the "<Name>'s corner" section near the top of her page. It's one-way on purpose:
   - A coach approves every update before anyone else sees it (Organizer → Updates), can fix a typo first, and can take a posted one down from the page.
   - There is no reply, comment, reaction, or message path anywhere, and browsers can't write to the database at all.
   - Emails, phone numbers, links and @handles are refused by the server, so an update can't open a side channel.
   - Text only, so no photo location data. Updates show only while the page is published, are capped at 3 a day, and are deleted at retention.
-  - They show in a themed "<Name>'s corner" section near the top of her page: the latest one featured, earlier ones below.
+  - The corner features the latest update with earlier ones below. Before her first update it shows a short "check back here" note.
+- **What supporters are told.** How it works has a fourth step, Follow along, and every page ends with a Questions section: what happens after you sponsor, how to see updates (bookmark the page, or the email), how to stop emails, why there's no way to message the athlete, where the money goes, and who sees your info. The answers adjust to the team's settings (pronouns, fee, whether update emails are on).
 - **Update emails (optional).** At checkout a sponsor who enters an email can tick "Email me when <name> posts an update" (shown only when this is turned on). Once their payment is confirmed, the first approval of each new update sends them a short themed email with a button to her corner (`/p/<name>-<id>?see=updates` jumps straight there).
   - The email never includes the update text or any way to reach the athlete. Replies don't go to her.
   - At most one email per athlete per day. Re-approving a taken-down update sends nothing. A failed send never blocks the approval.
