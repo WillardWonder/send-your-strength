@@ -95,6 +95,8 @@ The site never holds or moves money. Sponsors pay the team directly.
   - Text only, so no photo location data. Updates show only while the page is published, are capped at 3 a day, and are deleted at retention.
   - The corner features the latest update with earlier ones below. Before her first update it shows a short "check back here" note.
 - **What supporters are told.** How it works has a fourth step, Follow along, and every page ends with a Questions section: what happens after you sponsor, how to see updates (bookmark the page, or the email), how to stop emails, why there's no way to message the athlete, where the money goes, and who sees your info. The answers adjust to the team's settings (pronouns, fee, whether update emails are on).
+- **Organizers' evening summary.** At 6:30 p.m. team time, every address in `ADMIN_EMAILS` gets one email if anything's waiting: notes that open tomorrow morning (first, so they're read before the 5 a.m. release), updates to approve, other notes, payments to confirm, and double bookings. Names and counts only, no note text. Nothing waiting means no email. Its button opens the site at `?see=organizer`, which jumps to the panel. Uses the same email setup as update emails.
+- **Parent approval covers updates.** The publish checkbox says the parent approves the page "including the short updates I post." A page published before updates existed asks once for a parent's OK on the athlete's first update; it's recorded with the other acceptances.
 - **Update emails (optional).** At checkout a sponsor who enters an email can tick "Email me when <name> posts an update" (shown only when this is turned on). Once their payment is confirmed, the first approval of each new update sends them a short themed email with a button to her corner (`/p/<name>-<id>?see=updates` jumps straight there).
   - The email never includes the update text or any way to reach the athlete. Replies don't go to her.
   - At most one email per athlete per day. Re-approving a taken-down update sends nothing. A failed send never blocks the approval.
@@ -130,6 +132,21 @@ These run the real server code against an in-memory database. They cover:
 - roles, links, photos, and rate limits
 - one-way updates: approval, contact-info blocking, daily cap, delete, take-down
 - update emails: opt-in only after payment, no update text, once a day, stop link, void, failures
+- organizer summary: urgency order, recipients, no private text, quiet when nothing's waiting
+- parent approval for updates on pages published before they existed
+
+`test-rules/rules.test.js` checks the database rules against the real Firestore emulator (who can read pages, claims, notes, updates and sponsor data, and that browsers can't write anything). GitHub runs both suites on every push: see the **Actions** tab.
+
+## Updating a team's copy from the template
+
+Every team runs the same code and differs only in its own files: `team.json`, `README.md`, `docs/demo.json`, images in `docs/` (logo, photos), `.firebaserc` and `functions/.env`. To bring a team up to date after the template changes, from the team's repo:
+
+```
+node scripts/sync-from-template.js --dry-run   # see what would change
+node scripts/sync-from-template.js             # copy it in, then run the tests
+```
+
+It never touches the team's own files. Review with `git diff`, commit, and `firebase deploy`. Make fixes in the template, not in a team's copy, or the next sync will overwrite them.
 - template checks: config copies in sync, custom practice weekdays, default messages
 
 The Firestore and Storage rules aren't covered by these tests. Run them once in the Firebase console's Rules Playground before launch.

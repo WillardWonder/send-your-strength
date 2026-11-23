@@ -1,0 +1,13 @@
+{
+  "name": "send-your-strength-rules-tests",
+  "private": true,
+  "description": "Checks the Firestore security rules against the real Firestore emulator.",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-send-your-strength \"node rules.test.js\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0",
+    "firebase-tools": "^14.0.0"
+  }
+}

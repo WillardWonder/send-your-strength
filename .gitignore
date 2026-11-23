@@ -1,5 +1,8 @@
 node_modules/
 functions/.env
+roster*.csv
+*.roster.csv
+!roster-template.csv
 functions/.env.*
 !functions/.env.example
 .firebase/

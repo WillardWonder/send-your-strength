@@ -33,6 +33,7 @@
  * Update emails
  *   A sponsor who gave an email and ticked "email me when she posts" becomes a follower of that one athlete once
  *   the payment is confirmed (never before, so nobody can sign up someone else's inbox with an unpaid order).
+ *   Every evening organizers get one summary email if anything is waiting on them (see organizerDigest).
  *   When a coach approves an athlete's update, her followers get a short themed email with a link to her page:
  *   no update text, no reply path, at most one a day per athlete, and a one-click stop link for that athlete.
  */
@@ -44,7 +45,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 const { TEAM, buildSeasonDays, zonedTimeToUtc } = require("./schedule");
-const { updateEmail } = require("./email");
+const { updateEmail, digestEmail } = require("./email");
 
 initializeApp();
 const db = getFirestore();
@@ -71,6 +72,7 @@ const MAX_DAYS_PER_ORDER = 40;
 const MAX_MESSAGE = 280;
 const MAX_ASK = 900;
 const MAX_UPDATE = 500;
+const UPDATES_SINCE = "2026-11-21"; // first terms version whose parent approval covers posting updates
 const UPDATES_PER_DAY = 3;
 const UPDATES_PENDING_MAX = 5;
 const OPTS = { cors: true, maxInstances: 10 };
@@ -163,15 +165,69 @@ async function notifyFollowers(wrestlerId) {
         headers: { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
       };
     });
-    try {
-      const r = await fetch("https://api.resend.com/emails/batch", {
-        method: "POST", headers: { Authorization: `Bearer ${String(RESEND_API_KEY.value()).trim()}`, "Content-Type": "application/json" }, body: JSON.stringify(batch),
-      });
-      if (r.ok) emailed += batch.length; else console.error("Update email failed", r.status, await r.text().catch(() => ""));
-    } catch (e) { console.error("Update email failed", e); }
+    emailed += await sendBatch(batch);
   }
   return { emailed };
 }
+
+/* Low-level send through Resend's batch endpoint. Returns how many went out; never throws. */
+async function sendBatch(batch) {
+  try {
+    const r = await fetch("https://api.resend.com/emails/batch", {
+      method: "POST", headers: { Authorization: `Bearer ${String(RESEND_API_KEY.value()).trim()}`, "Content-Type": "application/json" }, body: JSON.stringify(batch),
+    });
+    if (r.ok) return batch.length;
+    console.error("Email send failed", r.status, await r.text().catch(() => ""));
+  } catch (e) { console.error("Email send failed", e); }
+  return 0;
+}
+
+/* ---------------- organizers' evening summary ----------------
+   Runs every evening. If anything is waiting on the organizers, each address in ADMIN_EMAILS gets one email:
+   notes that open tomorrow morning (most urgent), updates to approve, other notes, payments to confirm, double bookings.
+   Nothing waiting means no email. Names and counts only. */
+const DIGEST_HOUR = 18; // 6:30 p.m. team time: after practice, before the 5 a.m. note release
+async function buildDigest(now) {
+  const names = {};
+  const nameOf = async (id) => {
+    if (!(id in names)) names[id] = ((await db.doc(`wrestlers/${id}`).get()).data() || {}).displayName || "an athlete";
+    return names[id];
+  };
+  const tally = async (ids) => {
+    const by = {};
+    for (const id of ids) by[id] = (by[id] || 0) + 1;
+    const out = [];
+    for (const [id, n] of Object.entries(by)) out.push({ name: await nameOf(id), n });
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  };
+  const notes = (await db.collection("messages").where("status", "==", "pending").get()).docs.map((d) => d.data());
+  const soonCut = now + 18 * 3600e3; // opens by tomorrow morning (or already due)
+  const isSoon = (m) => m.revealAt && m.revealAt.toMillis && m.revealAt.toMillis() <= soonCut;
+  const upd = (await db.collectionGroup("updates").where("status", "==", "pending").get()).docs.map((d) => d.data().wrestlerId || d.ref.parent.parent.id);
+  const orders = (await db.collection("orders").where("status", "in", ["pending", "conflict"]).get()).docs.map((d) => d.data());
+  const recent = (o) => !o.createdAt || !o.createdAt.toMillis || now - o.createdAt.toMillis() < 14 * 864e5; // older ones were abandoned
+  const toConfirm = orders.filter((o) => o.status === "pending" && o.method !== "online" && recent(o));
+  return {
+    notesSoon: await tally(notes.filter(isSoon).map((m) => m.wrestlerId)),
+    notesLater: await tally(notes.filter((m) => !isSoon(m)).map((m) => m.wrestlerId)),
+    updates: await tally(upd),
+    payments: { n: toConfirm.length, cents: toConfirm.reduce((s, o) => s + (o.amountCents || 0), 0) },
+    conflicts: orders.filter((o) => o.status === "conflict").length,
+  };
+}
+async function sendDigest(now) {
+  if (!emailOn()) return { sent: 0, skipped: "off" };
+  const to = ADMIN_EMAILS.value().split(",").map(emailKey).filter((e) => EMAIL_RE.test(e));
+  if (!to.length) return { sent: 0, skipped: "no organizers" };
+  const w = await buildDigest(now);
+  const waiting = w.notesSoon.length + w.notesLater.length + w.updates.length + w.payments.n + w.conflicts;
+  if (!waiting) return { sent: 0, skipped: "nothing waiting" };
+  const site = siteUrl();
+  const m = digestEmail({ team: TEAM, w, panelUrl: `${site}/?see=organizer`, siteUrl: site });
+  const sent = await sendBatch(to.map((addr) => ({ from: MAIL_FROM.value(), to: [addr], subject: m.subject, html: m.html, text: m.text })));
+  return { sent, digest: w };
+}
+exports.organizerDigest = onSchedule({ schedule: `30 ${DIGEST_HOUR} * * *`, timeZone: TZ }, async () => { await sendDigest(Date.now()); });
 
 async function paymentConfig() {
   const snap = await db.doc("config/payments").get();
@@ -450,6 +506,15 @@ function updateText(raw) {
 exports.athletePostUpdate = onCall(OPTS, async (req) => {
   const id = requireAthlete(req);
   const text = updateText(req.data && req.data.text);
+  // A page published before updates existed needs a parent's OK for updates too, once.
+  const page = (await db.doc(`wrestlers/${id}`).get()).data() || {};
+  if (page.published === true && String(page.consentVersion || "") < UPDATES_SINCE) {
+    if (req.data.parentApproved !== true || req.data.version !== TERMS_VERSION) {
+      throw new HttpsError("failed-precondition", "parent-approval: A parent or guardian needs to OK posting updates first.");
+    }
+    await db.doc(`acceptances/ath_${id}_${TERMS_VERSION}`).set({ wrestlerId: id, uid: req.auth.uid, email: req.auth.token.email || "", version: TERMS_VERSION, scope: "updates", at: FieldValue.serverTimestamp() });
+    await db.doc(`wrestlers/${id}`).set({ consentVersion: TERMS_VERSION }, { merge: true });
+  }
   const mine = await db.collection(`wrestlers/${id}/updates`).get();
   const now = Date.now();
   const recent = mine.docs.filter((d) => { const c = d.data().createdAt; return c && c.toMillis && now - c.toMillis() < 864e5; }).length;

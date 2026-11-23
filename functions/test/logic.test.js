@@ -35,7 +35,7 @@ function write(ref, op, d, o) {
   const base = op === "set" && !(o && o.merge) ? {} : store.get(ref.path) || {};
   store.set(ref.path, applyFields(base, d));
 }
-const matches = (d, filters) => filters.every(([f, op, v]) => op === "==" ? cmp(d[f]) === cmp(v) : op === "<=" ? cmp(d[f]) <= cmp(v) : false);
+const matches = (d, filters) => filters.every(([f, op, v]) => op === "==" ? cmp(d[f]) === cmp(v) : op === "<=" ? cmp(d[f]) <= cmp(v) : op === "in" ? v.map(cmp).includes(cmp(d[f])) : false);
 class Query {
   constructor(coll, filters = [], group = false) { this.coll = coll; this.filters = filters; this.group = group; }
   where(f, op, v) { return new Query(this.coll, [...this.filters, [f, op, v]], this.group); }
@@ -340,6 +340,7 @@ const ATTEST = ["terms"];
   });
 
   /* ---- one-way athlete updates ---- */
+  const clearPosts = () => [...store.keys()].filter((k) => k.startsWith(`wrestlers/${kenzie}/updates/`)).forEach((k) => store.set(k, { ...get(k), createdAt: { toMillis: () => 0 }, status: get(k).status === "pending" ? "hidden" : get(k).status }));
   const updates = (w) => [...store.keys()].filter((k) => k.startsWith(`wrestlers/${w}/updates/`)).map((k) => ({ id: k.split("/").pop(), ...get(k) }));
   await t("updates: only the athlete posts to her own page; each waits for a coach and starts hidden", async () => {
     await expectErr(fn.athletePostUpdate({ auth: { uid: "s", token: {} }, data: { text: "hi" } }), "permission-denied");
@@ -379,6 +380,20 @@ const ATTEST = ["terms"];
     assert.ok(get(`wrestlers/${kenzie}/updates/${b.id}`), "another athlete's call touches only her own page");
     await fn.athleteDeleteUpdate({ ...me(kenzie), data: { updateId: b.id } });
     assert.strictEqual(get(`wrestlers/${kenzie}/updates/${b.id}`), undefined);
+  });
+
+  await t("updates: a page published before updates existed needs a parent's OK once, recorded like the publish consent", async () => {
+    const page = `wrestlers/${kenzie}`; const before = get(page).consentVersion;
+    store.set(page, { ...get(page), consentVersion: "2026-11-17" });
+    clearPosts();
+    await expectErr(fn.athletePostUpdate({ ...me(kenzie), data: { text: "Hi all" } }), "failed-precondition");
+    await expectErr(fn.athletePostUpdate({ ...me(kenzie), data: { text: "Hi all", parentApproved: true, version: "2026-11-17" } }), "failed-precondition");
+    await fn.athletePostUpdate({ ...me(kenzie), data: { text: "Hi all", parentApproved: true, version: (await fn.paymentMode({})).termsVersion } });
+    assert.ok(String(get(page).consentVersion) >= "2026-11-21");
+    assert.ok([...store.keys()].some((k) => k.startsWith(`acceptances/ath_${kenzie}_`) && get(k).scope === "updates"));
+    await fn.athletePostUpdate({ ...me(kenzie), data: { text: "No box needed now" } });
+    assert.strictEqual(before >= "2026-11-21", true, "the test athlete published under the current terms");
+    clearPosts();
   });
 
   /* ---- update emails ---- */
@@ -461,6 +476,47 @@ const ATTEST = ["terms"];
     assert.strictEqual(followers().find((x) => x.email === "void.me@example.org").active, false);
     assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 1);
     global.fetch = realFetch;
+  });
+
+  /* ---- organizers' evening summary ---- */
+  await t("summary: lists what's waiting (notes opening soon first, updates, notes, payments), to each organizer, names only", async () => {
+    sent.length = 0; global.fetch = async (url, o) => { sent.push({ url, batch: JSON.parse(o.body) }); return { ok: true, text: async () => "" }; };
+    params.ADMIN_EMAILS = "coach@example.org, Asst@Example.org";
+    // a fresh pending note opening tomorrow, an update waiting, and a payment-app order waiting
+    params.PAYMENT_MODE = "manual"; // sponsor pays the team by app/cash, organizers confirm
+    const r = await fn.createOrder(pub({ ...from(), data: { wrestlerId: kenzie, dayKeys: [P[L - 7]], donorName: "Grandpa", acceptTerms: true, message: "SECRET NOTE TEXT", method: "venmo" } }));
+    params.PAYMENT_MODE = "mock";
+    await fn.athletePostUpdate({ ...me(kenzie), data: { text: "Waiting on coach." } });
+    store.set("messages/soon1", { wrestlerId: kenzie, status: "pending", text: "SECRET NOTE TEXT", revealAt: new Ts(Date.now() + 10 * 3600e3) });
+    store.set("messages/later1", { wrestlerId: kenzie, status: "pending", text: "x", revealAt: new Ts(Date.now() + 9 * 864e5) });
+    await fn.organizerDigest();
+    assert.strictEqual(sent.length, 1);
+    const b = sent[0].batch;
+    assert.deepStrictEqual(b.map((m) => m.to[0]).sort(), ["asst@example.org", "coach@example.org"]);
+    const m = b[0];
+    assert.ok(/note opens tomorrow/.test(m.subject) && /update/.test(m.subject) && /payment/.test(m.subject), m.subject);
+    assert.ok(m.subject.indexOf("tomorrow") < m.subject.indexOf("update"), "most urgent first");
+    assert.ok(m.html.includes("https://merrill.example.org/?see=organizer"));
+    assert.ok(m.html.includes(get(`wrestlers/${kenzie}`).displayName));
+    assert.ok(!m.html.includes("SECRET NOTE TEXT") && !m.text.includes("SECRET NOTE TEXT") && !m.html.includes("Grandpa"), "no note text or sponsor names in an inbox");
+    store.delete("messages/soon1"); store.delete("messages/later1");
+    void r;
+  });
+  await t("summary: no email when nothing's waiting, when email is off, or with no organizer addresses", async () => {
+    for (const k of [...store.keys()]) {
+      const d = get(k);
+      if (k.startsWith("messages/") && d.status === "pending") store.set(k, { ...d, status: "approved" });
+      if (k.includes("/updates/") && d.status === "pending") store.set(k, { ...d, status: "hidden" });
+      if (k.startsWith("orders/") && (d.status === "pending" || d.status === "conflict")) store.set(k, { ...d, status: "void" });
+    }
+    sent.length = 0; await fn.organizerDigest(); assert.strictEqual(sent.length, 0, "nothing waiting");
+    await fn.athletePostUpdate({ ...me(kenzie), data: { text: "One more." } }).catch(() => {});
+    store.set("messages/x9", { wrestlerId: kenzie, status: "pending", revealAt: new Ts(Date.now() + 864e5 * 3) });
+    params.ADMIN_EMAILS = ""; await fn.organizerDigest(); assert.strictEqual(sent.length, 0, "no organizers");
+    params.ADMIN_EMAILS = "coach@example.org"; const key = params.RESEND_API_KEY; params.RESEND_API_KEY = "";
+    await fn.organizerDigest(); assert.strictEqual(sent.length, 0, "email off");
+    params.RESEND_API_KEY = key; await fn.organizerDigest(); assert.strictEqual(sent.length, 1);
+    store.delete("messages/x9"); global.fetch = realFetch;
   });
 
   /* ---- retention ---- */
