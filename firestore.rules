@@ -53,6 +53,8 @@ service cloud.firestore {
     match /private/{doc}         { allow read, write: if false; }
     match /processedEvents/{doc} { allow read, write: if false; }
     match /rateLimits/{key}      { allow read, write: if false; }
+    // Sponsors who asked for update emails (their email + stop-link token): functions only.
+    match /followers/{id}        { allow read, write: if false; }
 
     // Anything not listed above is closed.
     match /{document=**}         { allow read, write: if false; }

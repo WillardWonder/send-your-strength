@@ -93,6 +93,13 @@ The site never holds or moves money. Sponsors pay the team directly.
   - There is no reply, comment, reaction, or message path anywhere, and browsers can't write to the database at all.
   - Emails, phone numbers, links and @handles are refused by the server, so an update can't open a side channel.
   - Text only, so no photo location data. Updates show only while the page is published, are capped at 3 a day, and are deleted at retention.
+  - They show in a themed "<Name>'s corner" section near the top of her page: the latest one featured, earlier ones below.
+- **Update emails (optional).** At checkout a sponsor who enters an email can tick "Email me when <name> posts an update" (shown only when this is turned on). Once their payment is confirmed, the first approval of each new update sends them a short themed email with a button to her corner (`/p/<name>-<id>?see=updates` jumps straight there).
+  - The email never includes the update text or any way to reach the athlete. Replies don't go to her.
+  - At most one email per athlete per day. Re-approving a taken-down update sends nothing. A failed send never blocks the approval.
+  - Only paid sponsors can follow, so nobody can sign up someone else's inbox with an unpaid order. Voiding the order stops it.
+  - Every email has a one-click stop link for that athlete (`/unsubscribe`), including mail apps' built-in unsubscribe button.
+  - **To turn it on:** make a free [Resend](https://resend.com) account, verify your sending domain (add the DNS records it gives you in Cloudflare), then set `RESEND_API_KEY`, `SITE_URL` and `MAIL_FROM` in `functions/.env` and deploy. Leave the key blank and the feature stays off. The free tier covers 3,000 emails a month.
 - **Terms.** Organizers check one box agreeing to the Terms (they confirm the fundraiser follows every applicable law and school, district, athletic-association and booster policy, take responsibility for it and its money, and release and indemnify us) before any organizer tool works. Sponsors agree at checkout. Every acceptance is recorded. `docs/terms.html` and `docs/privacy.html` are drafts for legal review; bump `TERMS_VERSION` in `functions/index.js` when they change.
 - **Retention.** A daily job deletes athlete and sponsor data 90 days after the season's last day unless the team renews (`config/season.renewedFor`).
 
@@ -121,6 +128,7 @@ These run the real server code against an in-memory database. They cover:
 - voids, cash, and roster re-import
 - roles, links, photos, and rate limits
 - one-way updates: approval, contact-info blocking, daily cap, delete, take-down
+- update emails: opt-in only after payment, no update text, once a day, stop link, void, failures
 - template checks: config copies in sync, custom practice weekdays, default messages
 
 The Firestore and Storage rules aren't covered by these tests. Run them once in the Firebase console's Rules Playground before launch.

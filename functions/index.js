@@ -29,15 +29,22 @@
  *   adminConfirmOrder  organizer confirms money that arrived by a payment link (Venmo, Cash App, PayPal.me, Zelle, check)
  *   adminRecordPayment cash / check / app payment handed over in person
  *   markOrderPaid      the ONE place an order becomes paid. Card providers' verified webhooks will call it too.
+ *
+ * Update emails
+ *   A sponsor who gave an email and ticked "email me when she posts" becomes a follower of that one athlete once
+ *   the payment is confirmed (never before, so nobody can sign up someone else's inbox with an unpaid order).
+ *   When a coach approves an athlete's update, her followers get a short themed email with a link to her page:
+ *   no update text, no reply path, at most one a day per athlete, and a one-click stop link for that athlete.
  */
 const crypto = require("crypto");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineString } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 const { TEAM, buildSeasonDays, zonedTimeToUtc } = require("./schedule");
+const { updateEmail } = require("./email");
 
 initializeApp();
 const db = getFirestore();
@@ -50,6 +57,10 @@ const ADMIN_EMAILS = defineString("ADMIN_EMAILS", { default: "" });
 // it is only tallied for invoicing, and only when FEE_ON_LINK_PAYMENTS=yes. It is always disclosed to sponsors.
 const PLATFORM_FEE_PERCENT = defineString("PLATFORM_FEE_PERCENT", { default: "0" });
 const FEE_ON_LINK_PAYMENTS = defineString("FEE_ON_LINK_PAYMENTS", { default: "no" });
+// Update emails to sponsors. Off until both are set: a Resend API key and the site's public address (for links).
+const RESEND_API_KEY = defineString("RESEND_API_KEY", { default: "" });
+const SITE_URL = defineString("SITE_URL", { default: "" });
+const MAIL_FROM = defineString("MAIL_FROM", { default: "Send Your Strength <updates@sendyourstrength.com>" });
 
 // Bump this whenever docs/terms.html or docs/privacy.html changes in substance: everyone re-accepts.
 const TERMS_VERSION = "2026-11-21";
@@ -119,6 +130,48 @@ const LINK_TYPES = {
   check: (v) => clean(v, 120) || null,
 };
 const LINK_LABEL = { venmo: "Venmo", cashapp: "Cash App", paypalme: "PayPal", zelle: "Zelle", check: "Check or cash" };
+
+/* ---------------- update emails ---------------- */
+const emailOn = () => !!String(RESEND_API_KEY.value()).trim() && /^https:\/\/[^\s/]+/.test(String(SITE_URL.value()).trim());
+const siteUrl = () => String(SITE_URL.value()).trim().replace(/\/+$/, "");
+const EMAIL_GAP_MS = 20 * 3600 * 1000; // at most one update email per athlete per day
+const followerRef = (wrestlerId, email) => db.doc(`followers/${wrestlerId}_${crypto.createHash("sha256").update(emailKey(email)).digest("hex").slice(0, 24)}`);
+
+/* Emails an athlete's followers that she posted. Never throws: an email problem must not block the approval. */
+async function notifyFollowers(wrestlerId) {
+  if (!emailOn()) return { emailed: 0, skipped: "off" };
+  const w = (await db.doc(`wrestlers/${wrestlerId}`).get()).data();
+  if (!w || w.published !== true || w.active === false) return { emailed: 0, skipped: "unpublished" };
+  const privRef = db.doc(`wrestlerPrivate/${wrestlerId}`);
+  const last = ((await privRef.get()).data() || {}).lastUpdateEmailAt;
+  if (last && Date.now() - last < EMAIL_GAP_MS) return { emailed: 0, skipped: "today" };
+  const fol = (await db.collection("followers").where("wrestlerId", "==", wrestlerId).get()).docs
+    .map((d) => ({ id: d.id, ...d.data() })).filter((f) => f.active === true && EMAIL_RE.test(f.email || ""));
+  if (!fol.length) return { emailed: 0, skipped: "none" };
+  await privRef.set({ lastUpdateEmailAt: Date.now() }, { merge: true });
+  const site = siteUrl();
+  const display = w.displayName || "Athlete";
+  const first = display.split(/\s+/)[0];
+  const pageUrl = `${site}/p/${w.slug ? w.slug + "-" : ""}${wrestlerId}?see=updates`;
+  let emailed = 0;
+  for (let i = 0; i < fol.length; i += 100) {
+    const batch = fol.slice(i, i + 100).map((f) => {
+      const unsubscribeUrl = `${site}/unsubscribe?f=${encodeURIComponent(f.id)}&t=${encodeURIComponent(f.token)}`;
+      const m = updateEmail({ team: TEAM, first, display, pageUrl, unsubscribeUrl, siteUrl: site });
+      return {
+        from: MAIL_FROM.value(), to: [f.email], subject: m.subject, html: m.html, text: m.text,
+        headers: { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+      };
+    });
+    try {
+      const r = await fetch("https://api.resend.com/emails/batch", {
+        method: "POST", headers: { Authorization: `Bearer ${String(RESEND_API_KEY.value()).trim()}`, "Content-Type": "application/json" }, body: JSON.stringify(batch),
+      });
+      if (r.ok) emailed += batch.length; else console.error("Update email failed", r.status, await r.text().catch(() => ""));
+    } catch (e) { console.error("Update email failed", e); }
+  }
+  return { emailed };
+}
 
 async function paymentConfig() {
   const snap = await db.doc("config/payments").get();
@@ -204,6 +257,7 @@ async function placeOrder(tx, input, { method, publicOrder }) {
   const anon = !!input.anon;
   const contact = clean(input.contact, 120);
   const message = cleanText(input.message, MAX_MESSAGE);
+  const notify = input.notify === true && EMAIL_RE.test(contact);
   const revealDay = dayKeys.includes(clean(input.revealDay, 10)) ? clean(input.revealDay, 10) : dayKeys[0];
 
   const now = Date.now();
@@ -218,7 +272,7 @@ async function placeOrder(tx, input, { method, publicOrder }) {
   const holdExpires = Timestamp.fromMillis(now + holdMinutes() * 60 * 1000);
 
   tx.set(orderRef, {
-    wrestlerId, dayKeys, amountCents, units, donorName, anon, contact, message, revealDay,
+    wrestlerId, dayKeys, amountCents, units, donorName, anon, contact, message, revealDay, notify,
     status: "pending", method, termsVersion: publicOrder ? TERMS_VERSION : null, createdAt: FieldValue.serverTimestamp(),
   });
   refs.forEach((ref, i) => tx.set(ref, {
@@ -241,6 +295,8 @@ async function markOrderPaid(orderId, payment) {
     const refs = o.dayKeys.map((k) => claimRef(o.wrestlerId, k));
     const snaps = await Promise.all(refs.map((r) => tx.get(r)));
     // The hold lapsed and someone else took a day: never double-book. Flag it so an organizer refunds or moves it.
+    const fRef = o.notify ? followerRef(o.wrestlerId, o.contact) : null;
+    const fSnap = fRef ? await tx.get(fRef) : null;
     const lost = snaps.filter((s) => { const c = s.data(); return c && c.orderId !== orderId && claimIsTaken(c, now); });
     if (lost.length) {
       tx.update(orderRef, { status: "conflict", payment, conflictDays: lost.map((s) => s.data().dayKey) });
@@ -254,10 +310,21 @@ async function markOrderPaid(orderId, payment) {
       paidAt: FieldValue.serverTimestamp(), holdExpires: null,
     }));
     tx.update(orderRef, { status: "paid", payment, paidAt: FieldValue.serverTimestamp() });
+    const prevF = fSnap && fSnap.exists ? fSnap.data() : null;
+    const newFollower = !!fRef && !(prevF && prevF.active === true);
+    if (fRef) {
+      tx.set(fRef, {
+        wrestlerId: o.wrestlerId, email: emailKey(o.contact), name: o.donorName, active: true,
+        token: (prevF && prevF.token) || crypto.randomBytes(18).toString("hex"),
+        orderIds: [...new Set([...((prevF && prevF.orderIds) || []), orderId])],
+        since: (prevF && prevF.since) || Date.now(),
+      });
+    }
     tx.set(db.doc(`wrestlers/${o.wrestlerId}`), {
       raisedCents: FieldValue.increment(o.amountCents),
       daysPaid: FieldValue.increment(o.dayKeys.length),
       sponsorCount: FieldValue.increment(1),
+      ...(newFollower ? { followerCount: FieldValue.increment(1) } : {}),
     }, { merge: true });
     tx.set(db.doc("team/totals"), {
       raisedCents: FieldValue.increment(o.amountCents),
@@ -302,7 +369,7 @@ exports.paymentMode = onCall(OPTS, async () => {
   const { links } = await paymentConfig();
   return {
     mode: PAYMENT_MODE.value(), options: links, feePercent: feePercent(), feeOnLink: feeOnLink(),
-    disclosure: feeDisclosure(), termsVersion: TERMS_VERSION,
+    disclosure: feeDisclosure(), termsVersion: TERMS_VERSION, emailUpdates: emailOn(),
   };
 });
 
@@ -412,8 +479,12 @@ exports.adminModerateUpdate = onCall(OPTS, async (req) => {
   const approve = d.approve === true;
   const patch = { status: approve ? "live" : "hidden", moderatedBy: who(req), moderatedAt: FieldValue.serverTimestamp() };
   if (approve && d.text != null) patch.text = updateText(d.text);
+  // Followers hear about an update once, the first time it goes up. Taking it down and putting it back sends nothing.
+  const firstTime = approve && !snap.data().notifiedAt;
+  if (firstTime) patch.notifiedAt = Date.now();
   await ref.update(patch);
-  return { ok: true, status: patch.status };
+  const mail = firstTime ? await notifyFollowers(snap.data().wrestlerId || cleanId(d.wrestlerId)) : { emailed: 0 };
+  return { ok: true, status: patch.status, emailed: mail.emailed, emailSkipped: mail.skipped || null };
 });
 
 /* ---------------- organizers ---------------- */
@@ -671,6 +742,14 @@ exports.adminVoidOrder = onCall(OPTS, async (req) => {
     const snaps = await Promise.all(refs.map((r) => tx.get(r)));
     const msgRef = db.doc(`messages/${orderId}`);
     const msg = await tx.get(msgRef);
+    const fRef = o.notify && o.contact ? followerRef(o.wrestlerId, o.contact) : null;
+    const f = fRef ? (await tx.get(fRef)).data() : null;
+    if (f && (f.orderIds || []).includes(orderId)) {
+      const orderIds = f.orderIds.filter((x) => x !== orderId);
+      const stillActive = f.active === true && orderIds.length > 0;
+      tx.set(fRef, { ...f, orderIds, active: stillActive });
+      if (f.active === true && !stillActive) tx.set(db.doc(`wrestlers/${o.wrestlerId}`), { followerCount: FieldValue.increment(-1) }, { merge: true });
+    }
     snaps.forEach((s, i) => { if (s.exists && s.data().orderId === orderId) tx.delete(refs[i]); });
     if (o.status === "paid") {
       tx.set(db.doc(`wrestlers/${o.wrestlerId}`), { raisedCents: FieldValue.increment(-o.amountCents), daysPaid: FieldValue.increment(-o.dayKeys.length), sponsorCount: FieldValue.increment(-1) }, { merge: true });
@@ -710,6 +789,25 @@ exports.releaseMessages = onSchedule({ schedule: `0 ${REVEAL_HOUR} * * *`, timeZ
   }
 });
 
+/* One-click stop for update emails, for one sponsor and one athlete. GET from the email link, POST from mail apps'
+   built-in unsubscribe button (List-Unsubscribe-Post). Served at /unsubscribe through a Hosting rewrite. */
+const page = (title, body) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title></head><body style="margin:0;background:#0b0f1a;color:#eef1f8;font:17px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif"><main style="max-width:560px;margin:0 auto;padding:56px 20px"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#a7aec2;margin:0 0 8px">${TEAM.team.name.replace(/[<&>]/g, "")} · ${TEAM.brand.name}</p><h1 style="font-size:30px;line-height:1.15;margin:0 0 12px">${title}</h1><p style="color:#c9cfdf;margin:0">${body}</p></main></body></html>`;
+exports.unsubscribe = onRequest({ maxInstances: 5 }, async (req, res) => {
+  const q = { ...(req.query || {}), ...(req.body && typeof req.body === "object" ? req.body : {}) };
+  const id = clean(q.f, 80), token = clean(q.t, 80);
+  res.set("Cache-Control", "no-store");
+  const bad = () => res.status(400).type("html").send(page("That link didn't work", "It may be incomplete. Copy the whole link from the email, or reply to the team and they'll take you off."));
+  if (!/^[A-Za-z0-9_]{1,80}$/.test(id) || !/^[a-f0-9]{36}$/.test(token)) return bad();
+  const ref = db.doc(`followers/${id}`);
+  const f = (await ref.get()).data();
+  if (!f || String(f.token).length !== token.length || !crypto.timingSafeEqual(Buffer.from(String(f.token)), Buffer.from(token))) return bad();
+  if (f.active === true) {
+    await ref.set({ active: false, stoppedAt: Date.now() }, { merge: true });
+    await db.doc(`wrestlers/${f.wrestlerId}`).set({ followerCount: FieldValue.increment(-1) }, { merge: true });
+  }
+  return res.status(200).type("html").send(page("You're off the list", "You won't get any more update emails about this athlete. Your sponsorship and your note aren't affected, and the page link still works if you want to check in."));
+});
+
 /* Retention (promised in docs/privacy.html): 90 days after the season's last day, delete athlete and sponsor data,
    unless an organizer has renewed the team (config/season.renewedFor set to a later season). Totals stay as numbers. */
 const RETENTION_DAYS = 90;
@@ -723,7 +821,7 @@ async function purgeIfExpired(nowMs) {
   const wipe = async (q) => { const r = await q.get(); for (const d of r.docs) { await d.ref.delete(); n++; } };
   const ws = await db.collection("wrestlers").get();
   for (const w of ws.docs) { await wipe(db.collection(`wrestlers/${w.id}/claims`)); await wipe(db.collection(`wrestlers/${w.id}/updates`)); await w.ref.delete(); n++; }
-  for (const c of ["wrestlerPrivate", "rosterEmails", "orders", "messages"]) await wipe(db.collection(c));
+  for (const c of ["wrestlerPrivate", "rosterEmails", "orders", "messages", "followers"]) await wipe(db.collection(c));
   await db.doc("config/season").set({ purgedAt: FieldValue.serverTimestamp() }, { merge: true });
   return { purged: true, deleted: n };
 }

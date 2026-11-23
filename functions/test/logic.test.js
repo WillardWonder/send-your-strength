@@ -381,6 +381,88 @@ const ATTEST = ["terms"];
     assert.strictEqual(get(`wrestlers/${kenzie}/updates/${b.id}`), undefined);
   });
 
+  /* ---- update emails ---- */
+  const sent = []; const realFetch = global.fetch;
+  global.fetch = async (url, o) => { sent.push({ url, auth: o.headers.Authorization, batch: JSON.parse(o.body) }); return { ok: true, status: 200, json: async () => ({}), text: async () => "" }; };
+  let ip = 10; const from = () => ({ rawRequest: { headers: { "x-forwarded-for": `203.0.113.${ip++}` } } });
+  const paidOrder = async (day, more) => { const r = await fn.createOrder(pub({ ...from(), data: { wrestlerId: kenzie, dayKeys: [day], donorName: "Aunt Jo", acceptTerms: true, ...more } })); await fn.mockPay(pub({ ...from(), data: { orderId: r.orderId } })); return r.orderId; };
+  const L = P.length;
+  const followers = () => [...store.keys()].filter((k) => k.startsWith("followers/")).map((k) => ({ id: k.split("/")[1], ...get(k) }));
+  const approveNew = async (text) => { const r = await fn.athletePostUpdate({ ...me(kenzie), data: { text } }); return fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: r.id, approve: true } }); };
+  const clearDaily = () => { [...store.keys()].filter((k) => k.startsWith(`wrestlers/${kenzie}/updates/`)).forEach((k) => store.set(k, { ...get(k), createdAt: { toMillis: () => 0 } })); const pv = get(`wrestlerPrivate/${kenzie}`); delete pv.lastUpdateEmailAt; };
+  await t("update emails: off (and hidden at checkout) until a Resend key and the site address are set", async () => {
+    assert.strictEqual((await fn.paymentMode({})).emailUpdates, false);
+    await paidOrder(P[L - 1], { contact: "jo@example.org", notify: true });
+    clearDaily(); const r = await approveNew("Big week of practice.");
+    assert.deepStrictEqual([r.emailed, r.emailSkipped, sent.length], [0, "off", 0]);
+    params.RESEND_API_KEY = "re_test"; params.SITE_URL = "https://merrill.example.org";
+    assert.strictEqual((await fn.paymentMode({})).emailUpdates, true);
+  });
+  await t("update emails: only paid sponsors who gave an email and opted in follow; one record per email per athlete", async () => {
+    const before = followers().length;
+    assert.strictEqual(before, 1, "the opted-in paid sponsor above follows");
+    const r = await fn.createOrder(pub({ ...from(), data: { wrestlerId: kenzie, dayKeys: [P[L - 2]], donorName: "Stranger", acceptTerms: true, contact: "someone.else@example.org", notify: true } }));
+    assert.strictEqual(followers().length, before, "an unpaid order signs nobody up");
+    await fn.mockPay(pub({ ...from(), data: { orderId: r.orderId } }));
+    await paidOrder(P[L - 3], { contact: "715-555-0101", notify: true });
+    await paidOrder(P[L - 4], { contact: "nonotify@example.org" });
+    await paidOrder(P[L - 5], { contact: "JO@example.org", notify: true });
+    const f = followers();
+    assert.deepStrictEqual(f.map((x) => x.email).sort(), ["jo@example.org", "someone.else@example.org"]);
+    assert.strictEqual(f.find((x) => x.email === "jo@example.org").orderIds.length, 2);
+    assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 2);
+  });
+  await t("update emails: approving a new update emails followers a themed link (no update text, stop link, one-click header)", async () => {
+    clearDaily(); sent.length = 0;
+    const r = await approveNew("Secret detail that stays on the page.");
+    assert.strictEqual(r.emailed, 2);
+    const [m] = sent[0].batch;
+    assert.strictEqual(sent[0].url, "https://api.resend.com/emails/batch"); assert.strictEqual(sent[0].auth, "Bearer re_test");
+    assert.ok(m.subject.startsWith("Kenzie just posted an update"), m.subject);
+    assert.ok(m.html.includes(`https://merrill.example.org/p/${get(`wrestlers/${kenzie}`).slug}-${kenzie}?see=updates`));
+    assert.ok(!m.html.includes("Secret detail") && !m.text.includes("Secret detail"), "the update itself stays on the page");
+    assert.ok(/\/unsubscribe\?f=.+&t=[a-f0-9]{36}/.test(m.headers["List-Unsubscribe"]));
+    assert.strictEqual(m.headers["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click");
+  });
+  await t("update emails: at most one a day per athlete; re-approving a taken-down update sends nothing", async () => {
+    sent.length = 0;
+    const r1 = await approveNew("Second update today.");
+    assert.deepStrictEqual([r1.emailed, r1.emailSkipped], [0, "today"]);
+    const live = [...store.keys()].find((k) => k.startsWith(`wrestlers/${kenzie}/updates/`) && get(k).text === "Secret detail that stays on the page.").split("/").pop();
+    clearDaily();
+    await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: live, approve: false } });
+    const r2 = await fn.adminModerateUpdate({ ...admin, data: { wrestlerId: kenzie, updateId: live, approve: true } });
+    assert.deepStrictEqual([r2.emailed, sent.length], [0, 0]);
+  });
+  await t("update emails: a failed send never blocks the approval", async () => {
+    clearDaily(); global.fetch = async () => { throw new Error("network down"); };
+    const r = await approveNew("Approved even if email is down.");
+    assert.deepStrictEqual([r.status, r.emailed], ["live", 0]);
+    global.fetch = async (url, o) => { sent.push({ url, batch: JSON.parse(o.body) }); return { ok: true, text: async () => "" }; };
+  });
+  const res = () => { const r = { code: 0, body: "", status(c) { r.code = c; return r; }, type() { return r; }, set() { return r; }, send(b) { r.body = b; return r; } }; return r; };
+  await t("update emails: the stop link works only with its own token, from a click or a mail app's one-click POST", async () => {
+    const f = followers().find((x) => x.email === "someone.else@example.org");
+    const r1 = res(); await fn.unsubscribe({ query: { f: f.id, t: "0".repeat(36) } }, r1); assert.strictEqual(r1.code, 400);
+    const r2 = res(); await fn.unsubscribe({ query: { f: f.id.replace(/./, "x") + "<script>", t: f.token } }, r2); assert.strictEqual(r2.code, 400);
+    const r3 = res(); await fn.unsubscribe({ query: {}, body: { f: f.id, t: f.token } }, r3);
+    assert.strictEqual(r3.code, 200); assert.ok(r3.body.includes("off the list"));
+    assert.strictEqual(get(`followers/${f.id}`).active, false);
+    assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 1);
+    const r4 = res(); await fn.unsubscribe({ query: { f: f.id, t: f.token } }, r4);
+    assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 1, "clicking twice doesn't double-count");
+    clearDaily(); sent.length = 0; await approveNew("Only Jo hears about this one.");
+    assert.deepStrictEqual(sent[0].batch.map((m) => m.to[0]), ["jo@example.org"]);
+  });
+  await t("update emails: voiding a sponsor's only opted-in order stops their emails", async () => {
+    const oid = await paidOrder(P[L - 6], { contact: "void.me@example.org", notify: true });
+    assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 2);
+    await fn.adminVoidOrder({ ...admin, data: { orderId: oid } });
+    assert.strictEqual(followers().find((x) => x.email === "void.me@example.org").active, false);
+    assert.strictEqual(get(`wrestlers/${kenzie}`).followerCount, 1);
+    global.fetch = realFetch;
+  });
+
   /* ---- retention ---- */
   await t("retention: nothing is deleted before 90 days after the last day; after that, athlete and sponsor data is gone", async () => {
     const realNow = Date.now, last = Date.parse(TEAM.schedule.lastDay + "T00:00:00Z");
@@ -391,7 +473,7 @@ const ATTEST = ["terms"];
     const snapshot = new Map(store);
     Date.now = () => last + 91 * 864e5;
     try { await fn.retention(); } finally { Date.now = realNow; }
-    const left = [...store.keys()].filter((k) => /^(wrestlers|wrestlerPrivate|rosterEmails|orders|messages)\//.test(k));
+    const left = [...store.keys()].filter((k) => /^(wrestlers|wrestlerPrivate|rosterEmails|orders|messages|followers)\//.test(k));
     assert.deepStrictEqual(left, []);
     assert.ok(get("team/totals").raisedCents > 0, "team totals stay as numbers");
     store.clear(); for (const [k, v] of snapshot) store.set(k, v); // restore for the remaining tests

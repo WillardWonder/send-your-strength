@@ -103,12 +103,12 @@ async function makeDemoBackend(){
   const TODAY=D.today;
   const season={schedule:C.schedule,days:seasonDays(),breaks:C.schedule.breaks||{},offDays:[],practicePriceCents:C.prices.practiceCents,eventMultiplier:C.prices.eventMultiplier,
     rewardName:C.reward.name,rewardText:C.reward.text,payNote:C.payNote};
-  const W=D.athletes.map(a=>{const dn=displayFor(a.name);return{id:a.id,slug:slugFor(dn),name:dn,displayName:dn,weight:String(a.weight||""),photoUrl:a.photo||"",photoCutout:!!a.photo,photoConsent:!!a.photo,askText:a.ask||DEFAULT_ASK(firstName(a.name)),active:true,published:a.published!==false,raisedCents:0,daysPaid:0,sponsorCount:0}});
+  const W=D.athletes.map(a=>{const dn=displayFor(a.name);return{id:a.id,slug:slugFor(dn),name:dn,displayName:dn,weight:String(a.weight||""),photoUrl:a.photo||"",photoCutout:!!a.photo,photoConsent:!!a.photo,askText:a.ask||DEFAULT_ASK(firstName(a.name)),active:true,published:a.published!==false,raisedCents:0,daysPaid:0,sponsorCount:0,followerCount:a.followers||0}});
   const emails=Object.fromEntries(D.athletes.map(a=>[a.id,a.email||""])),names=Object.fromEntries(D.athletes.map(a=>[a.id,a.name]));
   const PAY={links:D.payments||[]},FEE=D.feePercent||0,TERMS="2026-11-21";let orgTerms=false;
-  const claims={},orders={},messages={},updates={};let seq=1;
+  const claims={},orders={},messages={},updates={},followers=new Set(),lastEmail={};let seq=1;
   const BOOT=Date.now(),demoNow=()=>Date.parse(TODAY+"T12:00:00Z")+(Date.now()-BOOT); // the sample season's clock
-  (D.updates||[]).forEach(([w,at,text,status])=>{const id="u"+(seq++);updates[id]={id,wrestlerId:w,text,status:status||"live",createdAt:Date.parse(at)}});const L=new Set();const emit=()=>L.forEach(f=>f());
+  (D.updates||[]).forEach(([w,at,text,status])=>{const id="u"+(seq++);updates[id]={id,wrestlerId:w,text,status:status||"live",createdAt:Date.parse(at),notified:status!=="pending"}});const L=new Set();const emit=()=>L.forEach(f=>f());
   const dayMap=Object.fromEntries(season.days.map(d=>[d.key,d]));
   const price=k=>dayMap[k].priceCents||(dayMap[k].kind==="event"?season.practicePriceCents*season.eventMultiplier:season.practicePriceCents);
   const taken=c=>c&&(c.status==="paid"||(c.status==="held"&&c.holdExpires>Date.now()));
@@ -116,7 +116,7 @@ async function makeDemoBackend(){
     if(tk.length){const e=new Error("Someone just took one of those days.");e.details={taken:tk};throw e}
     const id="o"+(seq++),amount=keys.reduce((s,k)=>s+price(k),0);
     const hold=Date.now()+(method==="sample"||method==="online"?15:72*60)*60000;
-    orders[id]={id,wrestlerId:inp.wrestlerId,dayKeys:keys,amountCents:amount,donorName:inp.donorName,anon:!!inp.anon,contact:inp.contact||"",message:inp.message||"",revealDay:keys.includes(inp.revealDay)?inp.revealDay:keys[0],status:"pending",method,createdAt:Date.now()-seq*60000};
+    orders[id]={id,wrestlerId:inp.wrestlerId,dayKeys:keys,amountCents:amount,donorName:inp.donorName,anon:!!inp.anon,contact:inp.contact||"",message:inp.message||"",notify:!!inp.notify,revealDay:keys.includes(inp.revealDay)?inp.revealDay:keys[0],status:"pending",method,createdAt:Date.now()-seq*60000};
     keys.forEach(k=>claims[inp.wrestlerId+"__"+k]={wrestlerId:inp.wrestlerId,dayKey:k,status:"held",orderId:id,displayName:inp.anon?"Anonymous":inp.donorName,hasNote:false,holdExpires:hold});
     return{orderId:id,amountCents:amount,holdExpires:hold,method}}
   function moderate(id,ok,text){const m=messages[id];m.status=ok?"approved":"rejected";if(text!=null)m.text=text;m.released=ok&&m.revealDay<=TODAY;
@@ -124,6 +124,7 @@ async function makeDemoBackend(){
   function pay(id,provider,approve){const o=orders[id];if(!o||o.status!=="pending")return{status:o?o.status:"missing"};o.status="paid";o.payment={provider:provider==="manual"?o.method:provider};
     o.dayKeys.forEach(k=>claims[o.wrestlerId+"__"+k]={wrestlerId:o.wrestlerId,dayKey:k,status:"paid",orderId:id,displayName:o.anon?"Anonymous":o.donorName,hasNote:!!o.message&&k===o.revealDay});
     const w=W.find(x=>x.id===o.wrestlerId);w.raisedCents+=o.amountCents;w.daysPaid+=o.dayKeys.length;w.sponsorCount++;
+    if(o.notify&&o.contact){const k=o.wrestlerId+"|"+o.contact.toLowerCase();if(!followers.has(k)){followers.add(k);w.followerCount=(w.followerCount||0)+1}}
     if(o.message){messages[id]={id,wrestlerId:o.wrestlerId,text:o.message,fromName:o.anon?"Someone in your corner":o.donorName,revealDay:o.revealDay,status:"pending",released:false};if(approve)moderate(id,true)}
     return{status:"paid"}}
   (D.sponsorships||[]).forEach(([w,keys,n,msg,rev])=>pay(place({wrestlerId:w,dayKeys:keys,donorName:n,anon:n==="Anonymous",message:msg,revealDay:rev||keys[0]},"sample").orderId,"sample",true));
@@ -145,8 +146,10 @@ async function makeDemoBackend(){
       if(mine.filter(u=>demoNow()-u.createdAt<864e5).length>=3)throw new Error("You can post 3 updates a day. Try again tomorrow.");
       const id="u"+(seq++);updates[id]={id,wrestlerId:auth.wrestlerId,text:String(text).trim().slice(0,UPDATE_MAX),status:"pending",createdAt:demoNow()};emit();return{id,status:"pending"}},
     async deleteUpdate(id){if(updates[id]&&updates[id].wrestlerId===auth.wrestlerId)delete updates[id];emit()},
-    async moderateUpdate(wid,id,approve,text){const u=updates[id];if(!u)throw new Error("Update not found.");if(approve&&text!=null){const bad=updateProblem(text);if(bad)throw new Error(bad);u.text=String(text).trim().slice(0,UPDATE_MAX)}u.status=approve?"live":"hidden";emit()},
-    async paymentMode(){const to=C.team.paymentRecipient||C.team.name;return{mode:"manual",options:PAY.links,feePercent:FEE,feeOnLink:!!D.feeOnLink,disclosure:feeText(FEE,to),termsVersion:TERMS}},
+    async moderateUpdate(wid,id,approve,text){const u=updates[id];if(!u)throw new Error("Update not found.");if(approve&&text!=null){const bad=updateProblem(text);if(bad)throw new Error(bad);u.text=String(text).trim().slice(0,UPDATE_MAX)}u.status=approve?"live":"hidden";let emailed=0,emailSkipped=null;
+      if(approve&&!u.notified){u.notified=true;const w=W.find(x=>x.id===wid);if(lastEmail[wid]&&demoNow()-lastEmail[wid]<20*3600e3)emailSkipped="today";else if(w&&w.followerCount){emailed=w.followerCount;lastEmail[wid]=demoNow()}}
+      emit();return{status:u.status,emailed,emailSkipped}},
+    async paymentMode(){const to=C.team.paymentRecipient||C.team.name;return{mode:"manual",options:PAY.links,feePercent:FEE,feeOnLink:!!D.feeOnLink,disclosure:feeText(FEE,to),termsVersion:TERMS,emailUpdates:true}},
     async createOrder(inp){await wait(450);if(inp.acceptTerms!==true)throw new Error("Agree to the terms to continue.");const r=place(inp,inp.method||"manual");emit();return r},
     async mockPay(id){await wait(1000);const r=pay(id,"mock",false);emit();return r},
     onAuth(cb){AL.add(cb);cb(auth)},
@@ -205,7 +208,7 @@ async function makeLiveBackend(){
     watchUpdates:(wid,cb,all)=>{const col=FS.collection(db,"wrestlers",wid,"updates");return FS.onSnapshot(all?col:FS.query(col,FS.where("status","==","live"),FS.limit(100)),q=>cb(q.docs.map(d=>({id:d.id,...d.data(),createdAt:ms(d.data().createdAt)||Date.now()}))),()=>cb([]))},
     postUpdate:text=>call("athletePostUpdate",{text}), deleteUpdate:updateId=>call("athleteDeleteUpdate",{updateId}),
     moderateUpdate:(wrestlerId,updateId,approve,text)=>call("adminModerateUpdate",{wrestlerId,updateId,approve,text}),
-    async paymentMode(){try{return await call("paymentMode",{})}catch(e){return{mode:"manual",options:[],feePercent:0,feeOnLink:false,disclosure:"",termsVersion:""}}},
+    async paymentMode(){try{return await call("paymentMode",{})}catch(e){return{mode:"manual",options:[],feePercent:0,feeOnLink:false,disclosure:"",termsVersion:"",emailUpdates:false}}},
     createOrder:inp=>call("createOrder",inp), mockPay:orderId=>call("mockPay",{orderId}),
     onAuth(cb){AU.onAuthStateChanged(auth,async u=>{if(!u)return cb({signedIn:false,admin:false,wrestlerId:null,email:"",termsOk:false});
       let tok=await u.getIdTokenResult(),termsOk=false;
@@ -243,6 +246,7 @@ let api,unClaims=()=>{},unNotes=()=>{},unUpd=()=>{},unAdmin=null,unList=null,unL
 const TERMS_V=()=>S.pay.termsVersion||"";
 const member=()=>!!(S.auth.admin||S.auth.wrestlerId);
 const app=document.getElementById("app");
+let SEE_UPDATES=(()=>{try{return new URLSearchParams(location.search).get("see")==="updates"}catch(e){return false}})(); // arrived from an update email
 const roster=()=>S.wrestlers.filter(w=>w.active!==false).sort((a,b)=>(+a.weight||999)-(+b.weight||999)||a.name.localeCompare(b.name));
 const allW=()=>S.linked&&!S.wrestlers.some(w=>w.id===S.linked.id)?[...S.wrestlers,S.linked]:S.wrestlers;
 const curW=()=>allW().find(w=>w.id===S.cur);
@@ -296,6 +300,9 @@ function render(){
   if(S.sel.size&&!S.modal)app.append(cartBar(w));
   if(S.modal)app.append(sheet());
   window.scrollTo(0,y);
+  const corner=SEE_UPDATES&&document.getElementById("updates");
+  // Arrived from an update email: jump straight to the corner (instant, so a live re-render can't cut it short) and pulse it once.
+  if(corner){SEE_UPDATES=false;S.flashUntil=Date.now()+2400;corner.classList.add("flash");setTimeout(()=>{const c=document.getElementById("updates");if(c)window.scrollTo(0,c.getBoundingClientRect().top+window.scrollY-80)},60);setTimeout(()=>{S.flashUntil=0},2500)}
   if(fid){const f=document.getElementById(fid);if(f){f.focus({preventScroll:true});if(fpos!=null&&f.setSelectionRange)try{f.setSelectionRange(fpos,fpos)}catch(e){}}}
 }
 
@@ -456,7 +463,7 @@ function cartBar(w){const s=picks();const first=firstName(w.name);
     h("span",{class:"sum num"},money(s.total)),
     h("span",{class:"what"},s.items.length+" day"+(s.items.length>1?"s":"")+" for "+first+(s.units>=5?" · you'll be a "+S.season.rewardName:s.units>0?" · "+(5-s.units)+" more "+pw()+(5-s.units>1?"s":"")+" to be a "+S.season.rewardName:"")),
     h("button",{class:"clr",onclick:()=>{S.sel.clear();render()}},"Clear"),
-    h("button",{class:"go",onclick:()=>{S.modal={type:"checkout",step:1,keys:[...S.sel],form:{donorName:"",anon:false,contact:"",message:"",revealDay:s.items[0].key}};render()}},S.auth.admin?"Record":"Send your strength")))}
+    h("button",{class:"go",onclick:()=>{S.modal={type:"checkout",step:1,keys:[...S.sel],form:{donorName:"",anon:false,contact:"",notify:true,message:"",revealDay:s.items[0].key}};render()}},S.auth.admin?"Record":"Send your strength")))}
 
 /* ---------- backers / standings / how ---------- */
 function backers(w){const map=dayMap();const t={};
@@ -492,20 +499,27 @@ function footer(){const a=S.auth;return h("footer",{class:"wrap foot"},h("span",
   h("span",null,h("a",{href:"terms.html"},"Terms")," · ",h("a",{href:"privacy.html"},"Privacy")," · "),
   a.signedIn?h("span",null,a.email+" · ",h("button",{onclick:()=>{api.signOut();if(api.mode==="demo")S.demoView="public"}},"Sign out")):h("button",{onclick:()=>{S.modal={type:"signin",stage:"email",email:""};render()}},A.One+" or coach sign-in"))}
 
+const approvedMsg=r=>r&&r.emailed?"Posted. "+r.emailed+(r.emailed===1?" supporter got":" supporters got")+" an email with a link to "+PN.pos+" page.":r&&r.emailSkipped==="today"?"Posted. Supporters already got an email today, so they'll see this one when they visit.":"Posted to "+PN.pos+" page.";
 /* ---------- one-way updates ----------
    The athlete posts, a coach approves, supporters read. There is deliberately no reply, comment or reaction. */
 const updDate=ms=>new Date(ms||Date.now()).toLocaleDateString("en-US",{timeZone:C.timezone||"America/Chicago",weekday:"short",month:"short",day:"numeric"});
 const UPD_STATUS={pending:["pending","Waiting for coach"],live:["paid","On your page"],hidden:["void","Not posted"]};
 function updatesFeed(w){const live=S.updates.filter(u=>u.status==="live");if(!live.length)return null;const first=firstName(w.name);
-  return h("section",{class:"panel",id:"updates"},h("div",{class:"sechead"},h("h2",null,"From "+first),
-      h("p",null,"Updates "+first+" posts during the season. A coach reads each one first. This is one-way: there's no way to reply here. To send "+PN.obj+" something, sponsor a day and write a note.")),
-    h("div",{class:"updates"},live.slice(0,30).map(u=>h("article",{class:"update"},h("div",{class:"eyebrow"},updDate(u.createdAt)),h("p",null,u.text),
-      S.auth.admin?h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.moderateUpdate(w.id,u.id,false).then(()=>toast("Taken down")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to take down"}}},"Take down")):null))))}
+  const[top,...rest]=live;const fresh=Date.now()-(top.createdAt||0)<4*864e5;
+  const takeDown=u=>S.auth.admin?h("button",{class:"btn mini",onclick:e=>{if(e.target.dataset.sure)api.moderateUpdate(w.id,u.id,false).then(()=>toast("Taken down")).catch(er=>toast(errText(er)));else{e.target.dataset.sure="1";e.target.textContent="Tap again to take down"}}},"Take down"):null;
+  return h("section",{class:"corner"+(S.flashUntil>Date.now()?" flash":""),id:"updates","aria-labelledby":"corner-h"},
+    h("div",{class:"corner-head"},h("div",null,h("div",{class:"eyebrow"},"Check back here"),h("h2",{id:"corner-h"},first+"'s corner")),
+      h("p",null,"Updates "+first+" posts for everyone backing "+PN.obj+". A coach reads each one first. It's one-way, so there's no replying here; to send "+PN.obj+" something, sponsor a day and write a note.")),
+    h("article",{class:"update latest"},h("div",{class:"meta"},h("span",{class:"tag"},fresh?"New":"Latest"),h("span",{class:"when"},updDate(top.createdAt))),
+      h("p",null,top.text),h("div",{class:"sig"},"— "+first),takeDown(top)),
+    rest.length?h("details",{class:"earlier",open:rest.length<=3?true:null},h("summary",null,"Earlier updates ("+rest.length+")"),
+      h("div",{class:"updates"},rest.slice(0,30).map(u=>h("article",{class:"update"},h("div",{class:"meta"},h("span",{class:"when"},updDate(u.createdAt))),h("p",null,u.text),takeDown(u))))):null)}
 function updateComposer(w){const err=h("p",{class:"err",role:"alert"});const cnt=h("div",{class:"counter num"},"0/"+UPDATE_MAX);
   const ta=h("textarea",{class:"inp",id:"my-update",maxlength:String(UPDATE_MAX),placeholder:"How's the season going? A win, a goal you hit, a thank-you…",style:"min-height:110px",oninput:e=>{cnt.textContent=e.target.value.length+"/"+UPDATE_MAX;err.textContent=""}});
   const mine=S.updates;
   return h("div",{class:"card"},h("h3",null,"Post an update"),
-    h("p",null,"Tell the people backing you how it's going. Your coach reads it first, then it shows on your page for anyone with your link."+(w.published?"":" It shows once your page is published.")),
+    h("p",null,"Tell the people backing you how it's going. Your coach reads it first, then it shows in "+(firstName(w.name))+"'s corner on your page for anyone with your link."+(w.published?"":" It shows once your page is published.")),
+    S.pay.emailUpdates&&w.followerCount?h("p",{style:"margin:0"},h("b",null,w.followerCount+(w.followerCount===1?" supporter gets":" supporters get"))," an email with a link to your page when your coach approves it (one email a day at most). The email doesn't include what you wrote."):null,
     h("p",{class:"mod"},"It's one-way: people can read it but can't reply or message you through it. Leave out where you'll be and when, your phone, email, social handles, and links."),
     ta,cnt,err,
     h("div",{class:"btns",style:"justify-content:flex-start"},h("button",{class:"btn blu",onclick:async e=>{const bad=updateProblem(ta.value);if(bad){err.textContent=bad;return}
@@ -602,14 +616,17 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
   const disclosure=()=>S.pay.disclosure?h("p",{class:"mod",id:"fee-disclosure"},S.pay.disclosure):"";
   // Creating the order holds the days. Shared by the test flow and the payment-option flow.
   const hold=async(btn,err,method,label)=>{btn.disabled=true;const was=btn.textContent;btn.textContent="Holding your days…";const f=m.form;
-    try{m.order=await api.createOrder({wrestlerId:w.id,dayKeys:s.items.map(d=>d.key),donorName:f.donorName.trim(),anon:f.anon,contact:f.contact.trim(),message:f.message.trim(),revealDay:f.revealDay,acceptTerms:true,method});
+    try{m.order=await api.createOrder({wrestlerId:w.id,dayKeys:s.items.map(d=>d.key),donorName:f.donorName.trim(),anon:f.anon,contact:f.contact.trim(),notify:f.notify!==false&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.contact.trim()),message:f.message.trim(),revealDay:f.revealDay,acceptTerms:true,method});
       m.option=label;m.stage="pay";render()}
     catch(er){const tk=er.details&&er.details.taken;if(tk){tk.forEach(k=>S.sel.delete(k));m.keys=m.keys.filter(k=>!tk.includes(k));if(!m.keys.length){close();toast("Those days were just taken. Pick others.");return}m.step=1;m.stage=null;render();toast("Someone just took "+tk.map(short).join(", ")+". It's off your list.");return}
       err.textContent=errText(er);btn.disabled=false;btn.textContent=was}};
   if(m.step===1){const f=m.form;
     const name=h("input",{class:"inp",id:"c-name",autocomplete:"name",value:f.donorName,maxlength:"60",oninput:e=>f.donorName=e.target.value});
     const anon=h("input",{type:"checkbox",id:"c-anon",onchange:e=>f.anon=e.target.checked});anon.checked=f.anon;
-    const contact=h("input",{class:"inp",id:"c-contact",autocomplete:"email",value:f.contact,maxlength:"120",oninput:e=>f.contact=e.target.value});
+    const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"").trim());
+    const notify=h("input",{type:"checkbox",id:"c-notify",onchange:e=>f.notify=e.target.checked});notify.checked=f.notify!==false;
+    const notifyRow=h("label",{class:"check",style:S.pay.emailUpdates&&isEmail(f.contact)?"":"display:none"},notify,h("span",null,(org?"They want an email":"Email me")+" when "+first+" posts an update ",h("small",null,"(a link to "+PN.pos+" page, at most once a day; stop any time)")));
+    const contact=h("input",{class:"inp",id:"c-contact",autocomplete:"email",value:f.contact,maxlength:"120",oninput:e=>{f.contact=e.target.value;notifyRow.style.display=S.pay.emailUpdates&&isEmail(f.contact)?"":"none"}});
     const cnt=h("div",{class:"counter num"},f.message.length+"/280");
     const msg=h("textarea",{class:"inp note-in",id:"c-msg",maxlength:"280",placeholder:`Dear ${first}, …`,oninput:e=>{f.message=e.target.value;cnt.textContent=f.message.length+"/280"}});msg.value=f.message;
     const rev=h("select",{class:"inp",id:"c-rev",onchange:e=>f.revealDay=e.target.value},s.items.map(d=>h("option",{value:d.key},F(d.key,{weekday:"short",month:"short",day:"numeric"})+(d.kind==="event"?" · "+d.name:" · "+C.labels.practice.toLowerCase()))));rev.value=f.revealDay;
@@ -624,7 +641,7 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
       s.items.length>1?h("label",{class:"field",for:"c-rev"},PN.Sub+" "+vb("opens","open")+" it on",rev):h("p",{class:"mod",style:"border-color:var(--primary-soft)"},PN.Sub+" "+vb("opens","open")+" it the morning of "+longDay(s.items[0].key)+"."),
       h("label",{class:"field",for:"c-name"},"Your name",name),
       h("label",{class:"check"},anon,"Show me as Anonymous on "+PN.pos+" calendar"),
-      h("label",{class:"field",for:"c-contact"},h("span",null,"Email or phone ",h("small",null,"(optional; only organizers see it)")),contact),
+      h("label",{class:"field",for:"c-contact"},h("span",null,"Email or phone ",h("small",null,"(optional; only organizers see it)")),contact),notifyRow,
       h("p",{class:"mod"},"You're backing "+PN.obj+" for this day, whatever it brings. Even if "+PN.sub+" "+vb("doesn't","don't")+" compete that day, your note opens that morning to keep "+PN.obj+" going. A coach reads every note first."),
       org?null:h("label",{class:"check"},terms,h("span",null,"I agree to the ",h("a",{href:"terms.html",target:"_blank",rel:"noopener"},"Terms")," and ",h("a",{href:"privacy.html",target:"_blank",rel:"noopener"},"Privacy Policy"))),err,
       h("div",{class:"btns"},h("button",{class:"btn",onclick:close},"Cancel"),h("button",{class:"btn pri",onclick:async e=>{
@@ -633,7 +650,7 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
         if(org||S.pay.mode!=="mock"){m.step=2;m.stage=null;render();return}
         await hold(e.target,err,"online","test")}},"Continue")))}
   else if(m.step===2&&org){const err=h("p",{class:"err",role:"alert"});
-    const rec=async(method,btn)=>{btn.disabled=true;try{await api.recordPayment({wrestlerId:w.id,dayKeys:s.items.map(d=>d.key),donorName:m.form.donorName.trim(),anon:m.form.anon,contact:m.form.contact,message:m.form.message,revealDay:m.form.revealDay,method});
+    const rec=async(method,btn)=>{btn.disabled=true;try{await api.recordPayment({wrestlerId:w.id,dayKeys:s.items.map(d=>d.key),donorName:m.form.donorName.trim(),anon:m.form.anon,contact:m.form.contact,notify:m.form.notify!==false&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(m.form.contact||"").trim()),message:m.form.message,revealDay:m.form.revealDay,method});
       m.paid={total:s.total,units:s.units};m.step=3;S.sel.clear();render()}catch(e){err.textContent=errText(e);btn.disabled=false}};
     box.append(h("h3",{id:"sheet-h"},"How did they pay?"),h("div",{class:"paybox"},h("span",{class:"amt num"},money(s.total)),h("span",null,m.form.donorName+" → "+first)),err,
       h("div",{class:"btns"},h("button",{class:"btn",onclick:()=>{m.step=1;render()}},"Back"),[["cash","Cash"],["check","Check"],["venmo","Venmo / app"]].map(([k,l])=>h("button",{class:"btn blu",onclick:e=>rec(k,e.target)},l))))}
@@ -661,7 +678,7 @@ function checkoutSheet(box,m){const w=curW(),s=picks(m.keys),first=firstName(w.n
   else{const backer=m.paid.units>=5;
     box.append(h("div",{class:"done"},h("img",{src:C.team.logo,alt:""}),h("h3",{id:"sheet-h"},"Your strength is on its way"),h("p",{class:"idea-line",style:"margin:0"},line("thanks")),
       h("p",{style:"margin:0;color:var(--muted)"},money(m.paid.total)+(m.paid.pending?" for the team, once your payment arrives. ":" for the team. ")+(m.form.message?"Your note is sealed. "+PN.Sub+"'ll open it the morning of "+longDay(m.form.revealDay)+".":"Thank you for backing "+C.team.name+".")),
-      h("p",{style:"margin:0;color:var(--muted)"},"Keep "+first+"'s link: "+PN.sub+" may post updates on this page through the season."),
+      h("p",{style:"margin:0;color:var(--muted)"},m.form.notify!==false&&S.pay.emailUpdates&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(m.form.contact||"").trim())?"You're in "+PN.pos+" corner now. When "+first+" posts an update, we'll email you a link"+(m.paid.pending?" (once your payment is confirmed).":"."):"Keep "+first+"'s link: "+PN.sub+" may post updates in "+PN.pos+" corner on this page through the season."),
       backer?h("span",{class:"badge"},"You're a "+S.season.rewardName):null),h("div",{class:"btns"},h("button",{class:"btn pri",onclick:close},"Done")))}
 }
 
@@ -688,7 +705,7 @@ function orgPanel(){const wrap=h("section",{class:"org",id:"organizer"});
     pu.slice().sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)).forEach(u=>{const ta=h("textarea",{class:"inp",id:"modu-"+u.id,maxlength:String(UPDATE_MAX)});ta.value=u.text;
       wrap.append(h("div",{class:"q"},h("div",{class:"meta"},h("b",null,"From "+wn(u.wrestlerId)),h("span",null,updDate(u.createdAt))),ta,
         h("div",{class:"btns"},h("button",{class:"btn mini",onclick:()=>api.moderateUpdate(u.wrestlerId,u.id,false).then(()=>toast("Not posted")).catch(e=>toast(errText(e)))},"Don't post"),
-          h("button",{class:"btn blu mini",onclick:()=>api.moderateUpdate(u.wrestlerId,u.id,true,ta.value).then(()=>toast("Posted to "+PN.pos+" page")).catch(e=>toast(errText(e)))},"Approve"))))})}
+          h("button",{class:"btn blu mini",onclick:()=>api.moderateUpdate(u.wrestlerId,u.id,true,ta.value).then(r=>toast(approvedMsg(r))).catch(e=>toast(errText(e)))},"Approve"))))})}
   else if(S.orgTab==="money"){
     const via=o=>(o.payment&&o.payment.provider)||o.method;const APPS=["venmo","cashapp","paypalme","zelle","manual"];
     const rows=roster().map(w=>{const os=ords.filter(o=>o.wrestlerId===w.id&&o.status==="paid");const by=f=>os.filter(o=>f(via(o))).reduce((s,o)=>s+o.amountCents,0);

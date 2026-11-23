@@ -432,10 +432,26 @@ th{font:800 13px var(--display);letter-spacing:.1em;text-transform:uppercase;col
 .journey b{color:var(--gold)}
 .backer-line{margin:0;color:var(--muted);font-size:14px}
 .backer-line b{color:var(--ink)}
-/* one-way athlete updates */
-.updates{display:grid;gap:12px;max-width:760px}
-.update{background:var(--night);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:14px 16px;display:grid;gap:6px}
-.update p{margin:0;font-size:17px;line-height:1.5;white-space:pre-line}
+/* the athlete's corner: one-way updates */
+.corner{margin-top:36px;scroll-margin-top:84px;border:1px solid var(--line);border-top:6px solid var(--accent);border-radius:18px;padding:22px 20px 20px;display:grid;gap:16px;
+  background:radial-gradient(120% 80% at 0% 0%,color-mix(in oklab,var(--primary) 22%,transparent),transparent 60%),var(--night)}
+.corner-head{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:end;justify-content:space-between}
+.corner-head h2{font-size:clamp(36px,6vw,54px);text-transform:uppercase;font-weight:900;margin:0;line-height:1}
+.corner-head p{margin:0;color:var(--muted);max-width:50ch;font-size:15px}
+.corner .eyebrow{color:var(--accent)}
+.update{background:color-mix(in oklab,var(--night) 70%,#000);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:grid;gap:8px}
+.update p{margin:0;font-size:17px;line-height:1.55;white-space:pre-line}
+.update .meta{display:flex;gap:10px;align-items:center}
+.update .when{font:800 12px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.update .tag{font:900 12px var(--display);letter-spacing:.14em;text-transform:uppercase;padding:3px 8px 2px;border-radius:4px;background:var(--accent);color:var(--on-accent)}
+.update.latest{border-left:4px solid var(--accent);padding:18px 20px}
+.update.latest p{font-size:clamp(18px,2.4vw,22px);font-weight:500}
+.update .sig{color:var(--muted);font-style:italic}
+.earlier summary{cursor:pointer;font:800 13px var(--display);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:4px 0}
+.earlier .updates{display:grid;gap:10px;margin-top:10px}
+.corner.flash{animation:cornerflash 2.2s ease-out 1}
+@keyframes cornerflash{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--accent) 70%,transparent)}60%{box-shadow:0 0 0 14px transparent}100%{box-shadow:none}}
+@media (prefers-reduced-motion:reduce){.corner.flash{animation:none}}
 </style>
 
 <div id="app"></div>

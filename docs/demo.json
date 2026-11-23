@@ -27,7 +27,8 @@
       "slug": "addison-clark",
       "weight": "",
       "photo": "addison.webp",
-      "email": "addison.c@example.org"
+      "email": "addison.c@example.org",
+      "followers": 6
     },
     {
       "id": "d4",
